@@ -346,8 +346,8 @@ At minimum, validate:
 - every `CoreUserFlow` has at least one UI surface
 - every user-visible flow has feedback
 - every `PageContract` supports at least one flow
-- every `supportsFlowIds` reference points to an existing flow
-- every `UIAction.triggersFlowId` reference points to an existing flow
+- every `PageContract.supportsFlowIds` reference points to a page-supportable flow id
+- every `UIAction.triggersFlowId` reference points to an action-triggerable flow id
 - every non-confirmation/non-readonly page has a primary action
 - every primary action has expected feedback or a clear target
 - every recovery flow has at least one recovery action
@@ -358,6 +358,61 @@ At minimum, validate:
 - explicit user constraints are not violated
 
 If validation fails, create a validation report and run bounded repair.
+
+
+
+### Flow reference validation scope
+
+Semantic validators must not validate UI flow references against `coreUserFlows` only.
+
+Collect valid flow ids from all relevant flow categories:
+
+```text
+flows.coreUserFlows
+flows.supportingInteractionFlows
+flows.sideEffectFlows
+flows.feedbackFlows
+flows.recoveryFlows
+```
+
+Use separate allowed sets for different UI references.
+
+For `PageContract.supportsFlowIds`, allow references to:
+
+```text
+coreUserFlows
+supportingInteractionFlows
+feedbackFlows
+recoveryFlows
+sideEffectFlows only when visibleToUser or feedbackSurface is present
+```
+
+For `UIAction.triggersFlowId`, allow references to:
+
+```text
+coreUserFlows
+supportingInteractionFlows
+recoveryFlows
+sideEffectFlows only when visibleToUser or feedbackSurface is present
+```
+
+`UIAction.triggersFlowId` should not normally reference `feedbackFlows` directly.
+
+Feedback flows should usually be connected through:
+
+```text
+UIAction.expectedFeedback
+PageContract.feedbackSurfaces
+UIState.visibleMessage
+PageContract.supportsFlowIds
+```
+
+If a UI reference points to a flow id that exists in `supportingInteractionFlows`, `feedbackFlows`, or `recoveryFlows`, do not classify it as unknown merely because it is not a core user flow.
+
+That is a validator-scope bug, not a blueprint repair problem.
+
+Do not ask the repair step to remove or flatten valid supporting, feedback, or recovery flow references into core flow references.
+
 
 ## Repair Rules
 
@@ -396,6 +451,311 @@ After freeze:
 - mark the blueprint version as `frozen`
 - mark previous non-frozen versions as `superseded` where appropriate
 - prevent downstream generation from using raw input as the primary source
+
+
+
+## Blueprint Quality Review Requirements
+
+Codex must not treat schema-valid and semantic-valid blueprints as automatically high quality.
+
+Before freezing a blueprint, also check for blueprint quality issues that could mislead downstream Stitch or React generation.
+
+### AppStructure consistency
+
+`UIModel.appStructure` must match the actual UI page and navigation structure.
+
+If `appStructure.pattern` is `multi_step_wizard`, require wizard evidence such as:
+
+```text
+navigation.type = stepper
+requiredComponents includes stepper
+multiple ordered wizard step pages
+page sections include step labels/progress
+primary flow steps are distributed across sequential step pages
+```
+
+If the UI has only a form page and a result page, prefer:
+
+```text
+form_to_result
+```
+
+Do not keep `multi_step_wizard` unless there is real wizard structure.
+
+Do not invent wizard pages merely to justify an incorrect appStructure.
+
+### Explicit outcome preservation
+
+Preserve explicit user outcome language.
+
+If the user asks to submit and see a result, receive a quote, generate an output, or view an answer, the blueprint must keep that visible outcome in the primary flow completion signal and result page contract.
+
+Bad:
+
+```text
+"The user sees either a quote result or request submitted feedback."
+```
+
+Good:
+
+```text
+"The user sees an estimated quote/result after submitting the form."
+```
+
+If real calculation logic is unknown, use an MVP default decision:
+
+```text
+Show an immediate estimated result using mock or deterministic placeholder calculation.
+```
+
+Do not weaken the product into a generic application submission or lead-capture confirmation unless the user explicitly requested that.
+
+### Primary action policy strength
+
+`generationPolicy.stitchGenerationRules.requirePrimaryActionInEveryPage` should default to `true`.
+
+Do not set it to `false` merely because a result or confirmation page is readonly.
+
+Represent page-level exceptions through:
+
+```text
+PageContract.purpose
+PageContract.states
+PageContract.completionSignals
+PageContract.secondaryActions
+```
+
+Input pages must have a primary action.
+
+Result, readonly, or confirmation pages may omit a primary submit action, but should usually include useful secondary actions such as:
+
+```text
+edit details
+start over
+download result
+copy result
+continue
+go back
+```
+
+### Quality issue handling
+
+Treat quality issues as follows:
+
+```text
+appStructure mismatch that misleads implementation -> high
+explicit outcome weakened -> blocker or high
+global primary action policy set weak without reason -> medium
+missing primary action on input page -> blocker
+missing useful next action on result page -> medium or high
+```
+
+Do not send these issues to broad full-blueprint regeneration by default.
+
+Prefer targeted repair of:
+
+```text
+UIModel.appStructure
+ProductIntent.successDefinition
+CoreUserFlow.completionSignal
+PageContract.purpose
+PageContract.completionSignals
+FeedbackFlow messages
+GenerationPolicy.stitchGenerationRules.requirePrimaryActionInEveryPage
+UncertaintyModel assumptions/default decisions
+```
+
+Freeze is allowed only when schema validation passes, semantic validation passes, and there are no blocker quality issues.
+
+
+
+
+## Quality Blocker Handling and Targeted Quality Repair
+
+Codex must not mark a session failed immediately when Blueprint Quality Review finds a blocker.
+
+First classify each quality blocker as:
+
+```text
+targeted_repairable
+non_repairable
+```
+
+### Targeted-repairable blockers
+
+The following quality issues should normally trigger targeted `quality_repair` before session failure:
+
+```text
+app_structure_mismatch
+explicit_outcome_weakened
+primary_action_policy_weak
+missing_result_page_action
+```
+
+A quality blocker is targeted-repairable when:
+
+```text
+the affected field path is clear
+the fix is local
+the fix does not change explicit user facts
+the fix does not expand scope
+the fix does not require rerunning unrelated LLM stages
+the fix can be checked again by schema, semantic, and quality validation
+```
+
+### Non-repairable blockers
+
+A quality blocker may fail the session without targeted repair only when:
+
+```text
+the product intent is contradictory
+explicit user requirements conflict
+the primary core flow is missing and cannot be safely inferred
+UI pages are broadly disconnected from the flow model
+domain and flow models are incompatible
+repair would require adding major product scope
+repair would require changing explicit user facts
+multiple artifacts are inconsistent beyond a local patch
+```
+
+### Required behavior
+
+Use this flow:
+
+```text
+schema validation passes
+semantic validation passes
+quality review finds blocker
+classify blocker
+if targeted-repairable -> run quality_repair
+persist repaired blueprint as a new blueprint version
+rerun schema validation
+rerun semantic validation
+rerun quality review
+freeze if checks pass
+fail only if non-repairable or repair attempts are exhausted
+```
+
+Do not use this flow:
+
+```text
+quality review blocker -> session failed
+```
+
+unless the blocker is non-repairable or bounded repair attempts have already failed.
+
+### quality_repair stage
+
+Implement `quality_repair` as a distinct stage from generic `blueprint_repair`.
+
+`blueprint_repair` is for schema or semantic defects.
+
+`quality_repair` is for quality review defects after schema and semantic validation have already passed.
+
+The `quality_repair` input must include:
+
+```text
+validated blueprint
+quality review report
+targeted quality issues
+repair rules
+```
+
+The `quality_repair` output must be the full corrected `ProductBlueprintV1`, not a patch only.
+
+### Post-repair checks
+
+After `quality_repair`, always rerun:
+
+```text
+schema validation
+semantic validation
+quality review
+```
+
+Only freeze after required checks pass.
+
+### Attempt limits
+
+Default max attempts:
+
+```text
+blueprint_repair: 2
+quality_repair: 2
+```
+
+Mark the session failed only when:
+
+```text
+the blocker is non-repairable
+quality repair attempts are exhausted
+quality repair introduces unrepairable schema or semantic failures
+quality review still has blockers after max attempts
+```
+
+### App structure mismatch repair
+
+For `app_structure_mismatch`, repair the app structure to match existing pages and navigation.
+
+Do not invent stepper pages or wizard UI just to justify a wizard shell.
+
+Example:
+
+```text
+Before:
+ui.appStructure.shell = "wizard"
+navigation.type = "minimal"
+pageOrder = ["quote_request_form", "quote_result_view"]
+
+After:
+ui.appStructure.shell = "form_to_result"
+navigation.type = "minimal"
+pageOrder = ["quote_request_form", "quote_result_view"]
+```
+
+If `form_to_result` is not supported by the implementation, choose the closest allowed non-wizard shell and persist the rationale.
+
+### Explicit outcome repair
+
+For `explicit_outcome_weakened`, preserve the user's visible outcome in:
+
+```text
+ProductIntent.successDefinition
+primary CoreUserFlow.completionSignal
+result PageContract.purpose
+result PageContract.completionSignals
+FeedbackFlow messages
+UncertaintyModel default decisions
+```
+
+Do not turn an explicit "submit and see result" request into generic request-submitted feedback.
+
+### Primary action policy repair
+
+For `primary_action_policy_weak`, prefer:
+
+```text
+generationPolicy.stitchGenerationRules.requirePrimaryActionInEveryPage = true
+```
+
+Use page-level semantics to explain readonly/result/confirmation exceptions.
+
+Do not weaken the global rule merely because result pages may omit a primary submit action.
+
+### Session status guidance
+
+Support these statuses or equivalent internal states:
+
+```text
+quality_reviewing
+quality_repairing
+quality_repaired
+blueprint_frozen
+failed
+```
+
+A quality blocker should move the session to `quality_repairing` when it is targeted-repairable, not directly to `failed`.
+
 
 ## Downstream Consumption Rules
 
