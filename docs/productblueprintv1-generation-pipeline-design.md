@@ -303,8 +303,9 @@ Stage 4: UI surfaces / Page contracts
 Stage 5: Policy + Uncertainty
 Stage 6: Blueprint assembly
 Stage 7: Validation
-Stage 8: Repair if needed
-Stage 9: Freeze blueprint
+Stage 8: Semantic quality review
+Stage 9: Repair if needed
+Stage 10: Freeze blueprint
 ```
 
 ---
@@ -578,11 +579,65 @@ Two validation layers are required:
 1. schema validation;
 2. semantic validation.
 
-The output is a `ValidationReport` stored as an artifact.
+The output is a `ValidationReport` stored as an artifact. Only blueprints that pass deterministic validation may proceed to semantic quality review.
 
-### 7.8 Stage 8: Repair
+### 7.8 Stage 8: Semantic Quality Review
 
-Repair only runs when validation fails.
+Semantic quality review runs after deterministic validation passes.
+
+It is an LLM-assisted review stage, but it is not the final validity gate.
+Programmatic validation remains the authority for schema validity and deterministic semantic validity.
+
+Input:
+
+```ts
+{
+  sessionId: string;
+  validatedBlueprint: ProductBlueprintV1;
+  validationReport: ValidationReport;
+  reviewRules: {
+    doNotChangeExplicitFacts: true;
+    doNotExpandScope: true;
+    reportIssuesOnly: true;
+    focusOnSemanticConsistency: true;
+  };
+}
+```
+
+Output:
+
+```ts
+{
+  review: SemanticQualityReviewReport;
+}
+```
+
+Purpose:
+
+```text
+Find blueprint issues that are structurally valid but semantically weak, misleading, vague, or inconsistent enough to degrade downstream Stitch or React generation.
+```
+
+Review scope examples:
+
+1. user-explicit result intent is weakened into generic submission confirmation;
+2. a flow is formally valid but does not read like a real user task;
+3. page purpose, supported flow IDs, and actions are only loosely aligned;
+4. completion signals are technically present but too weak to guide downstream generation;
+5. assumptions or default decisions are legal but misleadingly broad.
+
+Rules:
+
+1. The stage must return structured issues, not a repaired blueprint.
+2. The stage must not decide final validity on its own.
+3. The stage must not change explicit user facts.
+4. The stage must not expand product scope.
+5. The stage must classify issues by severity, repairability, affected paths, rationale, and suggested fix.
+6. The stage must be used to inform repair routing, not to replace deterministic validation.
+
+### 7.9 Stage 9: Repair
+
+Repair runs only when validation fails or when semantic/quality review finds repairable issues.
 
 Input:
 
@@ -610,16 +665,68 @@ Output:
 
 Rules:
 
-1. Fix only invalid or inconsistent fields.
-2. Do not change explicit user facts.
-3. Do not expand scope.
-4. Return the full corrected blueprint.
-5. Re-run validation after repair.
-6. Limit repair attempts, for example max 2 attempts.
+1. Repair must be routed by issue type. Do not allow one broad repair step to rewrite the whole blueprint.
+2. Use deterministic code repair first for structural, referential, policy, and other enumerable issues.
+3. Use LLM-assisted repair only for targeted semantic, wording, or local consistency issues that are difficult to repair deterministically.
+4. Fix only invalid, inconsistent, or explicitly reviewed fields.
+5. Do not change explicit user facts.
+6. Do not expand scope.
+7. Return the full corrected blueprint.
+8. Re-run validation after repair.
+9. Re-run semantic quality review after LLM-assisted repair or any repair that affects semantic interpretation.
+10. Limit repair attempts, for example max 2 attempts.
 
-### 7.9 Stage 9: Freeze
+#### 7.9.1 Repair routing: code logic vs LLM
 
-After validation passes, mark the blueprint as frozen.
+The system must explicitly separate what code repair is allowed to modify from what LLM-assisted repair is allowed to modify.
+
+Use deterministic code repair for issues such as:
+
+1. missing or empty required fields such as trigger, completionSignal, recoveryActions, or defaultDecision;
+2. invalid or missing references such as unknown flow IDs, invalid action targets, or missing UI surface references;
+3. structural constraints such as too few steps in a flow, a page with no supported flow, or a non-readonly page with no primary action;
+4. policy enforcement such as noFollowUpQuestions, forbidUiAsImage, and strong primary-action policy requirements;
+5. locally templateable quality fixes such as adding a useful secondary action to a result page or restoring required desktop breakpoints.
+
+Use LLM-assisted repair only for issues such as:
+
+1. preserving explicit user outcome semantics when wording became weak or ambiguous;
+2. strengthening completion signals, feedback copy, page purpose text, or default decisions without changing product scope;
+3. aligning domain, flow, UI, and uncertainty language when they are structurally legal but semantically inconsistent;
+4. local field-specificity improvements that need judgment but do not require broad restructuring.
+
+#### 7.9.2 LLM repair constraints
+
+LLM-assisted repair must be bounded.
+
+It must not:
+
+1. modify raw input;
+2. change any user-explicit fact into inferred or defaulted content;
+3. add payments, authentication, team collaboration, complex permissions, or integrations unless explicitly requested;
+4. add major new pages, major new flows, or major new entities just to make the blueprint feel more complete;
+5. remove valid supporting, feedback, or recovery flows merely to simplify references;
+6. reinterpret the product as a different product category;
+7. replace the whole blueprint when a local repair is sufficient.
+
+#### 7.9.3 Repair execution order
+
+Recommended repair order:
+
+```text
+1. run deterministic validation
+2. if validation fails -> code repair first
+3. if deterministic validation passes -> run semantic_quality_review
+4. if semantic_quality_review or quality review finds targeted semantic issues -> LLM-assisted repair
+5. rerun deterministic validation
+6. rerun semantic_quality_review
+7. rerun code-driven quality review
+8. freeze only when required gates pass
+```
+
+### 7.10 Stage 10: Freeze
+
+After required validation and review gates pass, mark the blueprint as frozen.
 
 Downstream stages must consume the frozen `blueprintId`, not the raw user input.
 
@@ -791,7 +898,9 @@ flow_modeling: medium
 ui_modeling: medium
 policy_uncertainty: low
 blueprint_assembly: low
+semantic_quality_review: medium
 blueprint_repair: medium
+quality_repair: medium
 ```
 
 ### 8.9 `temperature`
@@ -813,7 +922,9 @@ flow_modeling: 8000
 ui_modeling: 8000
 policy_uncertainty: 5000
 blueprint_assembly: 12000
+semantic_quality_review: 6000
 blueprint_repair: 12000
+quality_repair: 12000
 ```
 
 If output is truncated, increase the limit or split the schema further.
