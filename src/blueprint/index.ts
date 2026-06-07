@@ -11,8 +11,6 @@ export * from "./repair/quality-repair.js";
 export * from "./schemas/blueprint.js";
 export * from "./shared/env.js";
 export * from "./shared/ids.js";
-export * from "./stages/deterministic-generator.js";
-export * from "./stages/mock-stage-client.js";
 export * from "./stages/openai-responses-client.js";
 export * from "./stages/stage-runner.js";
 export * from "./types/blueprint.js";

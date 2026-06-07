@@ -6,7 +6,6 @@ import { reviewBlueprintQuality } from "../quality/review-blueprint.js";
 import { repairBlueprint } from "../repair/repair-blueprint.js";
 import { repairBlueprintQuality } from "../repair/quality-repair.js";
 import { productBlueprintSchema } from "../schemas/blueprint.js";
-import { MockBlueprintStageClient } from "../stages/mock-stage-client.js";
 import { OpenAIResponsesStageClient } from "../stages/openai-responses-client.js";
 import { runBlueprintStage } from "../stages/stage-runner.js";
 import type { BlueprintStageClient } from "../stages/openai-responses-client.js";
@@ -520,12 +519,3 @@ export async function generateBlueprintFromInput(
   };
 }
 
-export function createMockGenerateBlueprintOptions(
-  overrides: Omit<GenerateBlueprintOptions, "stageClient"> = {}
-): GenerateBlueprintOptions {
-  return {
-    ...overrides,
-    model: overrides.model ?? "mock-blueprint-model",
-    stageClient: new MockBlueprintStageClient()
-  };
-}
