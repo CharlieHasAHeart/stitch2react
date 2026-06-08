@@ -68,16 +68,10 @@ async function main(): Promise<void> {
     onStageEvent: logStageEvent
   });
   process.stdout.write(
-    `${JSON.stringify(
-      {
-        sessionId: result.sessionId,
-        blueprintId: result.blueprintId,
-        validationReportId: result.validationReportId,
-        blueprint: result.blueprint
-      },
-      null,
-      2
-    )}\n`
+    `Blueprint generation completed.\n` +
+      `sessionId: ${result.sessionId}\n` +
+      `blueprintId: ${result.blueprintId}\n` +
+      `validationReportId: ${result.validationReportId}\n`
   );
 }
 
