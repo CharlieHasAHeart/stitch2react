@@ -1,3 +1,5 @@
+import { mkdirSync, writeFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import OpenAI from "openai";
 import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
@@ -24,6 +26,31 @@ export type ResponsesStageResult = {
 
 export interface BlueprintStageClient {
   runStage(request: ResponsesStageRequest): Promise<ResponsesStageResult>;
+}
+
+function ensureDir(path: string): void {
+  mkdirSync(path, { recursive: true });
+}
+
+function writeDebugJson(path: string, value: unknown): void {
+  ensureDir(dirname(path));
+  writeFileSync(path, `${JSON.stringify(value, null, 2)}
+`, "utf8");
+}
+
+function rawResponseDebugPath(sessionId: string, stageRunId: string): string {
+  return resolve(process.cwd(), "artifacts", "debug", sessionId, `${stageRunId}.openai-response.json`);
+}
+
+function rawResponseTextPath(sessionId: string, stageRunId: string): string {
+  return resolve(process.cwd(), "artifacts", "debug", sessionId, `${stageRunId}.output-text.txt`);
+}
+
+function truncateForError(value: string, maxLength = 500): string {
+  if (value.length <= maxLength) {
+    return value;
+  }
+  return `${value.slice(0, maxLength)}...`;
 }
 
 type JsonSchemaValue =
@@ -269,9 +296,24 @@ export class OpenAIResponsesStageClient implements BlueprintStageClient {
       }
     });
 
-    return {
-      output: stripNullOptionals(JSON.parse(extractJsonText(response))),
-      openaiResponseId: response.id
-    };
+    const rawText = extractJsonText(response);
+    const responseDumpPath = rawResponseDebugPath(request.sessionId, request.stageRunId);
+    const responseTextPath = rawResponseTextPath(request.sessionId, request.stageRunId);
+
+    writeDebugJson(responseDumpPath, response);
+    ensureDir(dirname(responseTextPath));
+    writeFileSync(responseTextPath, rawText, "utf8");
+
+    try {
+      return {
+        output: stripNullOptionals(JSON.parse(rawText)),
+        openaiResponseId: response.id
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(
+        `[${request.sessionId}] Failed to parse stage ${request.stage} (${request.stageRunId}) response JSON: ${message}. Raw output saved to ${responseTextPath}. Response dump saved to ${responseDumpPath}. Raw preview: ${truncateForError(rawText)}`
+      );
+    }
   }
 }

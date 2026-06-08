@@ -1372,7 +1372,261 @@ export type BlueprintArea =
 
 ---
 
-## 33. Recommended Default Policies
+
+## 33. Pipeline Governance, Validation, Quality Review, and Repair Types
+
+These types describe how `ProductBlueprintV1` is generated, validated, reviewed, repaired, and frozen. They are not top-level blueprint content by default; they are pipeline artifacts stored alongside blueprint versions.
+
+### 33.1 Pipeline phases and stages
+
+```ts
+export type PipelinePhase =
+  | "session_input_contract"
+  | "product_frame"
+  | "product_behavior_model"
+  | "ui_contract_model"
+  | "blueprint_assembly"
+  | "quality_and_repair"
+  | "freeze";
+
+export type PipelineStage =
+  | "input_contract"
+  | "input_understanding"
+  | "product_frame"
+  | "domain_modeling"
+  | "flow_modeling"
+  | "flow_quality_review"
+  | "ui_modeling"
+  | "ui_contract_review"
+  | "policy_uncertainty"
+  | "blueprint_assembly"
+  | "deterministic_validation"
+  | "semantic_quality_review"
+  | "repair_routing"
+  | "blueprint_repair"
+  | "quality_repair"
+  | "freeze";
+
+export type PipelineGate =
+  | "input_contract"
+  | "intent_scope"
+  | "domain_flow_consistency"
+  | "flow_ui_coverage"
+  | "full_deterministic_validation"
+  | "quality_revalidation";
+```
+
+### 33.2 Early global policy seed
+
+```ts
+export type GlobalGenerationPolicySeed = {
+  noFollowUpQuestions: true;
+  assumptionStrategy: "conservative_mvp";
+  forbidUiAsImage: true;
+  explicitBeatsInferred: true;
+  doNotExpandScope: true;
+};
+```
+
+The policy seed is created before LLM generation begins and constrains all generation phases. `GenerationPolicy` later records the complete persisted policy used by downstream generation.
+
+### 33.3 Gate reports
+
+```ts
+export type GateReport = {
+  gate: PipelineGate;
+  sessionId: string;
+  inputArtifactIds: string[];
+  passed: boolean;
+  issues: GateIssue[];
+  createdAt: string;
+};
+
+export type GateIssue = {
+  severity: "error" | "warning";
+  code: string;
+  path: string;
+  message: string;
+  suggestedFix?: string;
+};
+```
+
+Gate reports are deterministic whenever possible. They should be stored as artifacts and used to decide whether the next dependency layer may run.
+
+### 33.4 Validation report
+
+```ts
+export type ValidationReport = {
+  validationId: string;
+  sessionId: string;
+  blueprintId?: string;
+  schemaValid: boolean;
+  semanticValid: boolean;
+  issues: ValidationIssue[];
+  createdAt: string;
+};
+
+export type ValidationIssue = {
+  severity: "error" | "warning";
+  code: string;
+  path: string;
+  message: string;
+  suggestedFix?: string;
+  repairability?: Repairability;
+};
+```
+
+Validation is not the same as quality review.
+
+```text
+Schema validation
+= data shape is valid
+
+Deterministic semantic validation
+= references, required fields, and behavioral invariants are valid
+
+Quality review
+= blueprint preserves product intent and gives downstream generators clear guidance
+```
+
+### 33.5 Blueprint quality review
+
+```ts
+export type BlueprintQualityIssueSeverity =
+  | "blocker"
+  | "high"
+  | "medium"
+  | "low";
+
+export type BlueprintQualityIssueCode =
+  | "app_structure_mismatch"
+  | "explicit_outcome_weakened"
+  | "primary_action_policy_weak"
+  | "missing_result_page_action"
+  | "flow_quality_weak"
+  | "ui_contract_ambiguous"
+  | "uncertainty_default_misleading"
+  | "other";
+
+export type Repairability =
+  | "not_needed"
+  | "targeted_repairable"
+  | "non_repairable";
+
+export type BlueprintQualityIssue = {
+  severity: BlueprintQualityIssueSeverity;
+  code: BlueprintQualityIssueCode;
+  path: string;
+  message: string;
+  affectedPaths?: string[];
+  rationale?: string;
+  suggestedFix?: string;
+  repairability: Repairability;
+};
+
+export type BlueprintQualityReport = {
+  sessionId: string;
+  blueprintId: string;
+  passed: boolean;
+  issues: BlueprintQualityIssue[];
+  createdAt: string;
+};
+```
+
+Quality review must not directly modify the blueprint. It reports issues for repair routing.
+
+### 33.6 Repair routing and repair plans
+
+```ts
+export type RepairRoute =
+  | "no_repair_needed"
+  | "code_schema_repair"
+  | "code_reference_repair"
+  | "code_policy_repair"
+  | "llm_semantic_local_repair"
+  | "quality_repair"
+  | "manual_blocking_issue";
+
+export type RepairPlan = {
+  sessionId: string;
+  blueprintId: string;
+  route: RepairRoute;
+  source:
+    | "gate_report"
+    | "validation_report"
+    | "quality_review_report";
+  sourceIssueCodes: string[];
+  affectedPaths: string[];
+  rationale: string;
+  maxAttempts: number;
+  createdAt: string;
+};
+
+export type RepairAttempt = {
+  sessionId: string;
+  blueprintId: string;
+  attemptNumber: number;
+  route: RepairRoute;
+  inputArtifactIds: string[];
+  outputBlueprintId?: string;
+  status: "pending" | "running" | "succeeded" | "failed" | "skipped";
+  validationReportId?: string;
+  qualityReviewReportId?: string;
+  startedAt: string;
+  finishedAt?: string;
+  error?: string;
+};
+```
+
+`blueprint_repair` is for schema or deterministic semantic defects.
+
+`quality_repair` is for targeted quality defects after schema and deterministic semantic validation pass.
+
+### 33.7 Quality repair input and output
+
+```ts
+export type QualityRepairInput = {
+  sessionId: string;
+  blueprintId: string;
+  validatedBlueprint: ProductBlueprintV1;
+  qualityReviewReport: BlueprintQualityReport;
+  targetedIssues: BlueprintQualityIssue[];
+  repairRules: {
+    doNotChangeExplicitFacts: true;
+    doNotExpandScope: true;
+    fixOnlyTargetedQualityIssues: true;
+    returnFullCorrectedBlueprint: true;
+  };
+};
+
+export type QualityRepairOutput = {
+  blueprint: ProductBlueprintV1;
+};
+```
+
+Quality repair must return a full corrected blueprint, not a patch, so the result can be persisted as a new blueprint version and revalidated.
+
+### 33.8 Freeze eligibility
+
+```ts
+export type FreezeEligibility = {
+  sessionId: string;
+  blueprintId: string;
+  schemaValid: boolean;
+  semanticValid: boolean;
+  qualityPassed: boolean;
+  unresolvedBlockers: BlueprintQualityIssue[];
+  unresolvedHighMisleadingIssues: BlueprintQualityIssue[];
+  canFreeze: boolean;
+  rationale: string;
+};
+```
+
+A blueprint can freeze only when schema validation passes, deterministic semantic validation passes, and quality review has no unresolved blocker or high misleading issues.
+
+---
+
+## 34. Recommended Default Policies
 
 For the first implementation, use conservative defaults:
 
@@ -1475,9 +1729,9 @@ export const defaultVisualPolicy: VisualPolicy = {
 
 ---
 
-## 34. How Downstream Stages Should Use ProductBlueprintV1
+## 35. How Downstream Stages Should Use ProductBlueprintV1
 
-### 34.1 Flow generation
+### 35.1 Flow generation
 
 Use:
 
@@ -1491,7 +1745,7 @@ uncertainty
 
 The system should derive flow candidates from user intent, domain entities, and default assumptions.
 
-### 34.2 Page contract generation
+### 35.2 Page contract generation
 
 Use:
 
@@ -1505,7 +1759,7 @@ ui.navigation
 
 Each page should support named flows and contain primary actions, feedback surfaces, recovery surfaces, and completion signals.
 
-### 34.3 Stitch prompt generation
+### 35.3 Stitch prompt generation
 
 Use:
 
@@ -1529,7 +1783,7 @@ Every Stitch prompt should include:
 - visual policy
 - HTML element requirements
 
-### 34.4 React generation
+### 35.4 React generation
 
 Use:
 
@@ -1545,7 +1799,7 @@ React generation should turn page contracts into components, mock data, state, a
 
 ---
 
-## 35. Summary
+## 36. Summary
 
 `ProductBlueprintV1` is the foundation for a one-shot product generation system.
 

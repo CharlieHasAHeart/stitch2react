@@ -1,4 +1,16 @@
-import type { GenerationPolicy, VisualPolicy } from "../types/blueprint.js";
+import type {
+  GenerationPolicy,
+  GlobalGenerationPolicySeed,
+  VisualPolicy
+} from "../types/blueprint.js";
+
+export const defaultGlobalGenerationPolicySeed: GlobalGenerationPolicySeed = {
+  noFollowUpQuestions: true,
+  assumptionStrategy: "conservative_mvp",
+  forbidUiAsImage: true,
+  explicitBeatsInferred: true,
+  doNotExpandScope: true
+};
 
 export const defaultGenerationPolicy: GenerationPolicy = {
   noFollowUpQuestions: true,

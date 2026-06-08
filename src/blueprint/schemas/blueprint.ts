@@ -2,6 +2,7 @@ import { z } from "zod";
 
 const fieldSourceSchema = z.enum(["explicit", "inferred", "defaulted"]);
 const confidenceSchema = z.enum(["high", "medium", "low"]);
+const repairabilitySchema = z.enum(["not_needed", "targeted_repairable", "non_repairable"]);
 
 export const fieldSchema = <T extends z.ZodTypeAny>(valueSchema: T) =>
   z.object({
@@ -23,6 +24,14 @@ const referenceInputSchema = z.object({
     "copywriting_tone",
     "unknown"
   ])
+});
+
+export const globalGenerationPolicySeedSchema = z.object({
+  noFollowUpQuestions: z.literal(true),
+  assumptionStrategy: z.literal("conservative_mvp"),
+  forbidUiAsImage: z.literal(true),
+  explicitBeatsInferred: z.literal(true),
+  doNotExpandScope: z.literal(true)
 });
 
 export const inputUnderstandingSchema = z.object({
@@ -349,18 +358,172 @@ export const productBlueprintSchema = z.object({
   uncertainty: uncertaintyModelSchema
 });
 
-export const validationIssueSchema = z.object({
+export const gateIssueSchema = z.object({
+  severity: z.enum(["error", "warning"]),
+  code: z.string(),
   path: z.string(),
   message: z.string(),
-  severity: z.enum(["error", "warning"])
+  suggestedFix: z.string().optional()
+});
+
+export const gateReportSchema = z.object({
+  id: z.string(),
+  gate: z.enum([
+    "input_contract",
+    "intent_scope",
+    "domain_flow_consistency",
+    "flow_ui_coverage",
+    "full_deterministic_validation",
+    "quality_revalidation"
+  ]),
+  context: z.object({
+    layer: z.enum(["session", "product_frame", "flow", "ui", "blueprint", "quality"]),
+    kind: z.enum(["structural", "light_review", "deterministic_validation", "quality_revalidation"]),
+    sourceStage: z
+      .enum([
+        "input_contract",
+        "input_understanding",
+        "product_frame",
+        "domain_modeling",
+        "flow_modeling",
+        "flow_quality_review",
+        "ui_modeling",
+        "ui_contract_review",
+        "policy_uncertainty",
+        "blueprint_assembly",
+        "deterministic_validation",
+        "semantic_quality_review",
+        "repair_routing",
+        "blueprint_repair",
+        "quality_repair",
+        "freeze"
+      ])
+      .optional()
+  }),
+  sessionId: z.string(),
+  inputArtifactIds: z.array(z.string()),
+  passed: z.boolean(),
+  issues: z.array(gateIssueSchema),
+  createdAt: z.string()
+});
+
+export const validationIssueSchema = z.object({
+  severity: z.enum(["error", "warning"]),
+  code: z.string(),
+  path: z.string(),
+  message: z.string(),
+  suggestedFix: z.string().optional(),
+  repairability: repairabilitySchema.optional()
 });
 
 export const validationReportSchema = z.object({
   id: z.string(),
+  validationId: z.string(),
   sessionId: z.string(),
-  blueprintId: z.string(),
+  blueprintId: z.string().optional(),
   schemaValid: z.boolean(),
   semanticValid: z.boolean(),
   issues: z.array(validationIssueSchema),
   createdAt: z.string()
+});
+
+export const blueprintQualityIssueSchema = z.object({
+  severity: z.enum(["blocker", "high", "medium", "low"]),
+  code: z.enum([
+    "app_structure_mismatch",
+    "explicit_outcome_weakened",
+    "primary_action_policy_weak",
+    "missing_result_page_action",
+    "desktop_resolution_policy_missing",
+    "generic_field_specificity",
+    "flow_quality_weak",
+    "ui_contract_ambiguous",
+    "uncertainty_default_misleading",
+    "other"
+  ]),
+  path: z.string(),
+  message: z.string(),
+  affectedPaths: z.array(z.string()).optional(),
+  rationale: z.string().optional(),
+  suggestedFix: z.string().optional(),
+  repairability: repairabilitySchema
+});
+
+export const blueprintQualityReportSchema = z.object({
+  id: z.string(),
+  sessionId: z.string(),
+  blueprintId: z.string(),
+  passed: z.boolean(),
+  issues: z.array(blueprintQualityIssueSchema),
+  createdAt: z.string()
+});
+
+export const repairPlanSchema = z.object({
+  id: z.string(),
+  sessionId: z.string(),
+  blueprintId: z.string(),
+  route: z.enum([
+    "no_repair_needed",
+    "code_schema_repair",
+    "code_reference_repair",
+    "code_policy_repair",
+    "llm_semantic_local_repair",
+    "quality_repair",
+    "manual_blocking_issue"
+  ]),
+  source: z.enum(["gate_report", "validation_report", "quality_review_report"]),
+  sourceReportId: z.string().optional(),
+  sourceGate: z
+    .enum([
+      "input_contract",
+      "intent_scope",
+      "domain_flow_consistency",
+      "flow_ui_coverage",
+      "full_deterministic_validation",
+      "quality_revalidation"
+    ])
+    .optional(),
+  sourceGateContext: z
+    .object({
+      layer: z.enum(["session", "product_frame", "flow", "ui", "blueprint", "quality"]),
+      kind: z.enum(["structural", "light_review", "deterministic_validation", "quality_revalidation"]),
+      sourceStage: z
+        .enum([
+          "input_contract",
+          "input_understanding",
+          "product_frame",
+          "domain_modeling",
+          "flow_modeling",
+          "flow_quality_review",
+          "ui_modeling",
+          "ui_contract_review",
+          "policy_uncertainty",
+          "blueprint_assembly",
+          "deterministic_validation",
+          "semantic_quality_review",
+          "repair_routing",
+          "blueprint_repair",
+          "quality_repair",
+          "freeze"
+        ])
+        .optional()
+    })
+    .optional(),
+  sourceIssueCodes: z.array(z.string()),
+  affectedPaths: z.array(z.string()),
+  rationale: z.string(),
+  maxAttempts: z.number().int().positive(),
+  createdAt: z.string()
+});
+
+export const freezeEligibilitySchema = z.object({
+  sessionId: z.string(),
+  blueprintId: z.string(),
+  schemaValid: z.boolean(),
+  semanticValid: z.boolean(),
+  qualityPassed: z.boolean(),
+  unresolvedBlockers: z.array(blueprintQualityIssueSchema),
+  unresolvedHighMisleadingIssues: z.array(blueprintQualityIssueSchema),
+  canFreeze: z.boolean(),
+  rationale: z.string()
 });

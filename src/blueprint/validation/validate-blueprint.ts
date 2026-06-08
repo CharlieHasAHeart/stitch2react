@@ -10,8 +10,8 @@ import type {
   ValidationReport
 } from "../types/blueprint.js";
 
-function flowIssue(path: string, message: string): ValidationIssue {
-  return { path, message, severity: "error" };
+function issue(code: string, path: string, message: string): ValidationIssue {
+  return { code, path, message, severity: "error", repairability: "targeted_repairable" };
 }
 
 function hasMeaningfulSteps(flow: CoreUserFlow): boolean {
@@ -20,16 +20,21 @@ function hasMeaningfulSteps(flow: CoreUserFlow): boolean {
 
 function validateFlow(flow: CoreUserFlow, issues: ValidationIssue[]): void {
   if (!flow.trigger.trim()) {
-    issues.push(flowIssue(`flows.coreUserFlows.${flow.id}.trigger`, "Core flow must have a trigger."));
+    issues.push(issue("core_flow_missing_trigger", `flows.coreUserFlows.${flow.id}.trigger`, "Core flow must have a trigger."));
   }
   if (!hasMeaningfulSteps(flow)) {
     issues.push(
-      flowIssue(`flows.coreUserFlows.${flow.id}.steps`, "Core flow must have at least two meaningful steps.")
+      issue(
+        "core_flow_insufficient_steps",
+        `flows.coreUserFlows.${flow.id}.steps`,
+        "Core flow must have at least two meaningful steps."
+      )
     );
   }
   if (!flow.completionSignal.signal.trim()) {
     issues.push(
-      flowIssue(
+      issue(
+        "core_flow_missing_completion_signal",
         `flows.coreUserFlows.${flow.id}.completionSignal`,
         "Core flow must have a completion signal."
       )
@@ -37,11 +42,21 @@ function validateFlow(flow: CoreUserFlow, issues: ValidationIssue[]): void {
   }
   if (flow.uiSurfaceIds.length === 0) {
     issues.push(
-      flowIssue(`flows.coreUserFlows.${flow.id}.uiSurfaceIds`, "Core flow must have at least one UI surface.")
+      issue(
+        "core_flow_missing_ui_surface",
+        `flows.coreUserFlows.${flow.id}.uiSurfaceIds`,
+        "Core flow must have at least one UI surface."
+      )
     );
   }
   if (flow.feedback.length === 0) {
-    issues.push(flowIssue(`flows.coreUserFlows.${flow.id}.feedback`, "User-visible core flow must have feedback."));
+    issues.push(
+      issue(
+        "core_flow_missing_feedback",
+        `flows.coreUserFlows.${flow.id}.feedback`,
+        "User-visible core flow must have feedback."
+      )
+    );
   }
 }
 
@@ -57,8 +72,6 @@ function buildFlowReferenceSets(blueprint: ProductBlueprintV1): FlowReferenceSet
   const feedbackIds = blueprint.flows.feedbackFlows.map((flow) => flow.id);
   const recoveryIds = blueprint.flows.recoveryFlows.map((flow) => flow.id);
 
-  // Side effect flow UI visibility support is not yet represented in the schema.
-  // Until such fields exist, keep side effect flows out of UI reference sets.
   const pageSupportableFlowIds = new Set<string>([
     ...coreIds,
     ...supportingIds,
@@ -93,7 +106,13 @@ function validatePage(
   issues: ValidationIssue[]
 ): void {
   if (page.supportsFlowIds.length === 0) {
-    issues.push(flowIssue(`ui.pages.${page.id}.supportsFlowIds`, "PageContract must support at least one flow."));
+    issues.push(
+      issue(
+        "page_missing_supported_flow",
+        `ui.pages.${page.id}.supportsFlowIds`,
+        "PageContract must support at least one flow."
+      )
+    );
   }
 
   for (const flowId of page.supportsFlowIds) {
@@ -101,7 +120,7 @@ function validatePage(
       const message = flowReferenceSets.allDeclaredFlowIds.has(flowId)
         ? `Flow id ${flowId} exists in the blueprint but is not page-supportable under the semantic validation contract.`
         : `Unknown supported flow id: ${flowId}.`;
-      issues.push(flowIssue(`ui.pages.${page.id}.supportsFlowIds`, message));
+      issues.push(issue("page_invalid_supported_flow", `ui.pages.${page.id}.supportsFlowIds`, message));
     }
   }
 
@@ -116,19 +135,24 @@ function validatePage(
         ? `Flow id ${action.triggersFlowId} exists in the blueprint but is not action-triggerable under the semantic validation contract.`
         : `Unknown trigger flow id: ${action.triggersFlowId}.`;
       issues.push(
-        flowIssue(`ui.pages.${page.id}.actions.${action.id}.triggersFlowId`, message)
+        issue("action_invalid_trigger_flow", `ui.pages.${page.id}.actions.${action.id}.triggersFlowId`, message)
       );
     }
   }
 
   if (!page.confirmationOnly && !page.readonly && !page.primaryAction) {
     issues.push(
-      flowIssue(`ui.pages.${page.id}.primaryAction`, "Non-readonly, non-confirmation page must have a primary action.")
+      issue(
+        "page_missing_primary_action",
+        `ui.pages.${page.id}.primaryAction`,
+        "Non-readonly, non-confirmation page must have a primary action."
+      )
     );
   }
   if (page.primaryAction && !page.primaryAction.feedback.trim() && !page.primaryAction.targetPageId?.trim()) {
     issues.push(
-      flowIssue(
+      issue(
+        "primary_action_missing_feedback",
         `ui.pages.${page.id}.primaryAction.feedback`,
         "Primary action must have expected feedback or a clear target."
       )
@@ -140,7 +164,11 @@ function validateRecoveryFlows(recoveryFlows: RecoveryFlow[], issues: Validation
   for (const flow of recoveryFlows) {
     if (flow.recoveryActions.length === 0) {
       issues.push(
-        flowIssue(`flows.recoveryFlows.${flow.id}.recoveryActions`, "Recovery flow must have at least one recovery action.")
+        issue(
+          "recovery_flow_missing_actions",
+          `flows.recoveryFlows.${flow.id}.recoveryActions`,
+          "Recovery flow must have at least one recovery action."
+        )
       );
     }
   }
@@ -164,7 +192,8 @@ function semanticIssues(blueprint: ProductBlueprintV1): ValidationIssue[] {
   for (const question of blueprint.uncertainty.unresolvedQuestions) {
     if (!question.defaultDecision.trim()) {
       issues.push(
-        flowIssue(
+        issue(
+          "unresolved_question_missing_default_decision",
           `uncertainty.unresolvedQuestions.${question.id}.defaultDecision`,
           "Every unresolved question must have a default decision."
         )
@@ -174,25 +203,37 @@ function semanticIssues(blueprint: ProductBlueprintV1): ValidationIssue[] {
 
   if (blueprint.visualPolicy.imageUsage.forbidUiAsImage !== true) {
     issues.push(
-      flowIssue("visualPolicy.imageUsage.forbidUiAsImage", "visualPolicy.imageUsage.forbidUiAsImage must be true.")
+      issue(
+        "visual_policy_ui_as_image_forbidden",
+        "visualPolicy.imageUsage.forbidUiAsImage",
+        "visualPolicy.imageUsage.forbidUiAsImage must be true."
+      )
     );
   }
 
   if (blueprint.generationPolicy.noFollowUpQuestions !== true) {
     issues.push(
-      flowIssue("generationPolicy.noFollowUpQuestions", "generationPolicy.noFollowUpQuestions must be true.")
+      issue(
+        "generation_policy_no_follow_up_required",
+        "generationPolicy.noFollowUpQuestions",
+        "generationPolicy.noFollowUpQuestions must be true."
+      )
     );
   }
 
   const explicitConstraintText = blueprint.input.explicitConstraints.value.join(" ").toLowerCase();
-  const hasNoLoginConstraint = explicitConstraintText.includes("no login");
+  const hasNoLoginConstraint = explicitConstraintText.includes("no login") || explicitConstraintText.includes("无需登录");
   if (hasNoLoginConstraint) {
     const hasLoginArtifacts =
       JSON.stringify(blueprint.flows).toLowerCase().includes("login") ||
       JSON.stringify(blueprint.ui).toLowerCase().includes("login");
     if (hasLoginArtifacts) {
       issues.push(
-        flowIssue("input.explicitConstraints", "Explicit constraint 'no login' was violated in flows or UI.")
+        issue(
+          "explicit_constraint_no_login_violated",
+          "input.explicitConstraints",
+          "Explicit no-login constraint was violated in flows or UI."
+        )
       );
     }
   }
@@ -202,10 +243,10 @@ function semanticIssues(blueprint: ProductBlueprintV1): ValidationIssue[] {
     blueprint.input.requestedScope.value === "full_product_mvp";
   if (!scopeExplicitlyRequestsMore) {
     if (blueprint.flows.coreUserFlows.length > blueprint.generationPolicy.maxCoreFlows) {
-      issues.push(flowIssue("flows.coreUserFlows", "Core flow count exceeds generation policy."));
+      issues.push(issue("core_flow_count_exceeds_policy", "flows.coreUserFlows", "Core flow count exceeds generation policy."));
     }
     if (blueprint.ui.pages.length > blueprint.generationPolicy.maxPages) {
-      issues.push(flowIssue("ui.pages", "Page count exceeds generation policy."));
+      issues.push(issue("page_count_exceeds_policy", "ui.pages", "Page count exceeds generation policy."));
     }
   }
 
@@ -224,18 +265,22 @@ export function validateBlueprint(
     parsedBlueprint = productBlueprintSchema.parse(blueprint);
   } catch (error) {
     if (error instanceof ZodError) {
-      for (const issue of error.issues) {
+      for (const zodIssue of error.issues) {
         issues.push({
-          path: issue.path.join("."),
-          message: issue.message,
-          severity: "error"
+          severity: "error",
+          code: "schema_validation_error",
+          path: zodIssue.path.join("."),
+          message: zodIssue.message,
+          repairability: "targeted_repairable"
         });
       }
     } else {
       issues.push({
+        severity: "error",
+        code: "schema_validation_exception",
         path: "$",
         message: error instanceof Error ? error.message : String(error),
-        severity: "error"
+        repairability: "non_repairable"
       });
     }
   }
@@ -244,12 +289,16 @@ export function validateBlueprint(
     issues.push(...semanticIssues(parsedBlueprint));
   }
 
+  const schemaValid = parsedBlueprint !== null;
+  const semanticValid = parsedBlueprint !== null && issues.length === 0;
+
   return {
     id: createId("val"),
+    validationId: createId("val"),
     sessionId,
     blueprintId,
-    schemaValid: parsedBlueprint !== null,
-    semanticValid: parsedBlueprint !== null && issues.length === 0,
+    schemaValid,
+    semanticValid,
     issues,
     createdAt: new Date().toISOString()
   };

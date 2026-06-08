@@ -285,34 +285,209 @@ Implementation rules:
 
 ## 6. Recommended Generation Strategy
 
-Use Scheme B: multi-stage LLM generation with explicit upstream JSON artifacts.
+Use Scheme B: multi-stage LLM generation with explicit upstream JSON artifacts, organized as **phases, gates, and routed repair loops**.
 
 Do not rely on implicit conversation history.
 
 Do not use `conversation` or any API-level threaded context as the source of truth.
 
-Each stage receives only the upstream JSON artifacts it needs. Each stage returns one or more strictly typed JSON artifacts. Each artifact is stored and validated before being used by the next stage.
+Each generation stage receives only the upstream JSON artifacts it needs. Each stage returns one or more strictly typed JSON artifacts. Each artifact is stored and validated before it is used by the next stage.
 
-High-level stage flow:
+The pipeline should optimize for the lowest possible rework cost:
 
 ```text
-Stage 1: Input + Product + Users
-Stage 2: Domain
-Stage 3: Flows
-Stage 4: UI surfaces / Page contracts
-Stage 5: Policy + Uncertainty
-Stage 6: Blueprint assembly
-Stage 7: Validation
-Stage 8: Semantic quality review
-Stage 9: Repair if needed
-Stage 10: Freeze blueprint
+Generate one dependency layer
+  -> validate and review that layer
+  -> continue only when the layer is stable
 ```
+
+Do not wait until the final blueprint to discover obvious intent, reference, flow, or UI coverage problems.
+
+### 6.1 High-level phase flow
+
+```text
+Phase 0: Session and input contract
+  Stage 0: Store raw input artifact
+  Stage 0A: Seed global generation policy
+  Gate 0: Input contract check
+
+Phase 1: Product frame
+  Stage 1: Input understanding
+  Stage 2: Product intent, user model, explicit constraints
+  Gate A: Intent, scope, and explicit-constraint check
+
+Phase 2: Product behavior model
+  Stage 3: Domain modeling
+  Stage 4: Flow modeling
+  Gate B: Domain-flow consistency check
+  Optional light semantic review: flow quality only
+
+Phase 3: UI contract model
+  Stage 5: UI surfaces and page contracts
+  Stage 6: Feedback, recovery, and completion-surface mapping
+  Gate C: Flow-UI coverage check
+  Optional light semantic review: UI contract quality only
+
+Phase 4: Blueprint assembly
+  Stage 7: Visual policy, generation policy, uncertainty
+  Stage 8: Blueprint assembly
+  Gate D: Full deterministic validation
+
+Phase 5: Quality and targeted repair
+  Stage 9: Semantic quality review
+  Stage 10: Repair routing
+  Stage 11A: Blueprint repair for schema or deterministic semantic defects
+  Stage 11B: Quality repair for targeted quality defects
+  Gate E: Re-validation and affected-area re-review
+
+Phase 6: Freeze
+  Stage 12: Freeze blueprint
+```
+
+### 6.2 Why phases and gates are required
+
+The pipeline has dependency layers:
+
+```text
+intent -> domain -> flows -> UI contracts -> policies -> full blueprint
+```
+
+A downstream layer should not be asked to compensate for defects in an upstream layer.
+
+Examples:
+
+1. If the product intent violates an explicit user constraint, fix it before domain generation.
+2. If the flow model weakens the user's outcome intent, fix it before UI generation.
+3. If UI pages do not cover core flows, fix them before blueprint assembly.
+4. If deterministic validation fails, do not run semantic quality review yet.
+5. If quality review finds only a local repairable problem, do not regenerate the whole blueprint.
+
+### 6.3 Gate responsibilities
+
+```ts
+type PipelineGateName =
+  | "input_contract"
+  | "intent_scope"
+  | "domain_flow_consistency"
+  | "flow_ui_coverage"
+  | "full_deterministic_validation"
+  | "quality_revalidation";
+```
+
+Gate behavior:
+
+```text
+Gate 0: Input contract check
+- raw input exists
+- one-shot mode is active
+- global policy seed is present
+- no follow-up-question behavior is allowed
+
+Gate A: Intent, scope, and explicit-constraint check
+- explicit constraints are preserved
+- inferred/defaulted facts are not marked explicit
+- conservative MVP boundary is set
+- no forbidden scope such as payments/auth/collaboration/integrations is added unless requested
+
+Gate B: Domain-flow consistency check
+- flows use existing or safely inferred domain entities
+- every core flow has trigger, steps, feedback, recovery, completion signal, and UI surface names
+- explicit user outcome language is preserved
+- flow count respects policy
+
+Gate C: Flow-UI coverage check
+- every page supports at least one page-supportable flow
+- every core user flow has at least one page or UI surface
+- visible feedback, recovery, and completion signals appear in UI contracts
+- non-readonly input/action pages have primary actions
+
+Gate D: Full deterministic validation
+- schema validation passes
+- deterministic semantic validation passes
+- flow references are checked with the correct allowed reference sets
+
+Gate E: Re-validation and affected-area re-review
+- repaired blueprint is persisted as a new version
+- schema validation reruns
+- deterministic semantic validation reruns
+- quality review reruns
+- only affected semantic areas are re-reviewed when repair is local
+```
+
+### 6.4 Early and late policy split
+
+Do not wait until the end of generation to apply global policy.
+
+Use an early policy seed from Phase 0 onward:
+
+```ts
+type GlobalGenerationPolicySeed = {
+  noFollowUpQuestions: true;
+  assumptionStrategy: "conservative_mvp";
+  forbidUiAsImage: true;
+  explicitBeatsInferred: true;
+  doNotExpandScope: true;
+};
+```
+
+The early policy seed constrains input understanding, product intent, domain, flow, and UI generation.
+
+The late policy stage completes:
+
+```text
+VisualPolicy
+GenerationPolicy
+UncertaintyModel
+default decisions
+Stitch-specific rules
+```
+
+### 6.5 Semantic review placement
+
+Semantic quality review exists in two forms:
+
+```text
+light semantic review
+= local review of a single artifact layer, such as flow quality or UI contract quality
+
+full semantic quality review
+= final review of the complete ProductBlueprintV1 after deterministic validation passes
+```
+
+Light semantic review is optional but recommended when the product input is sparse, ambiguous, or outcome-sensitive.
+
+Full semantic quality review is required before freeze.
+
+Semantic quality review must report structured issues. It must not directly rewrite the blueprint.
+
+### 6.6 Repair architecture
+
+Repair is a router, not one broad rewrite stage.
+
+```ts
+type RepairRoute =
+  | "no_repair_needed"
+  | "code_schema_repair"
+  | "code_reference_repair"
+  | "code_policy_repair"
+  | "llm_semantic_local_repair"
+  | "quality_repair"
+  | "manual_blocking_issue";
+```
+
+Use deterministic code repair first for schema, reference, structural, policy, and enumerable issues.
+
+Use LLM-assisted repair only for targeted semantic, wording, or local consistency issues that are difficult to repair deterministically.
+
+Use quality repair only after schema and deterministic semantic validation pass and quality review finds targeted-repairable quality defects.
+
+Do not allow one broad repair step to rewrite the whole blueprint when a local repair is sufficient.
 
 ---
 
-## 7. Stage Definitions
+## 7. Phase and Stage Definitions
 
-### 7.1 Stage 1: Input Understanding, Product Intent, User Model
+### 7.1 Phase 0: Session and Input Contract
 
 Input:
 
@@ -329,6 +504,48 @@ Output:
 
 ```ts
 {
+  rawInputArtifactId: string;
+  globalPolicySeed: GlobalGenerationPolicySeed;
+}
+```
+
+Purpose:
+
+```text
+Create the durable session, store the immutable raw input, and establish non-negotiable generation constraints before any LLM stage runs.
+```
+
+Rules:
+
+1. Store raw input exactly once as the source artifact.
+2. Do not treat the user's input as an ongoing conversation.
+3. Seed global generation policy before Stage 1.
+4. Do not ask follow-up questions.
+
+### 7.2 Phase 1: Product Frame
+
+Stages:
+
+```text
+Stage 1: Input understanding
+Stage 2: Product intent, user model, explicit constraints
+Gate A: Intent, scope, and explicit-constraint check
+```
+
+Input:
+
+```ts
+{
+  sessionId: string;
+  rawInput: string;
+  globalPolicySeed: GlobalGenerationPolicySeed;
+}
+```
+
+Output:
+
+```ts
+{
   input: InputUnderstanding;
   product: ProductIntent;
   users: UserModel;
@@ -338,29 +555,39 @@ Output:
 Purpose:
 
 ```text
-Understand the user's input type, maturity, scope, product goal, target users, constraints, references, and high-level product intent.
+Understand the input type, maturity, requested scope, product goal, target users, constraints, references, and high-level product intent.
 ```
 
 Rules:
 
-1. Do not generate flows yet except as rough notes if required by schema.
+1. Do not generate flows yet except as rough internal notes if required by schema.
 2. Do not generate pages yet.
 3. Detect explicit constraints and preserve them.
 4. Determine whether the input is a one-line idea, short brief, structured PRD, workflow description, screen request, reference-product description, or mixed.
 5. Default ambiguous product scope to a conservative MVP.
+6. Gate A must run before domain modeling.
 
-### 7.2 Stage 2: Domain Modeling
+### 7.3 Phase 2: Product Behavior Model
+
+Stages:
+
+```text
+Stage 3: Domain modeling
+Stage 4: Flow modeling
+Gate B: Domain-flow consistency check
+Optional light semantic review: flow quality only
+```
 
 Input:
 
 ```ts
 {
   sessionId: string;
-  rawInput: string;
   upstreamArtifacts: {
     input: InputUnderstanding;
     product: ProductIntent;
     users: UserModel;
+    globalPolicySeed: GlobalGenerationPolicySeed;
   };
 }
 ```
@@ -370,48 +597,6 @@ Output:
 ```ts
 {
   domain: DomainModel;
-}
-```
-
-Purpose:
-
-```text
-Extract or infer core entities, fields, relationships, statuses, business rules, and mock data needs.
-```
-
-Rules:
-
-1. Prefer entities implied by product goal and user roles.
-2. Do not introduce complex entities unless necessary for the MVP.
-3. Mark inferred entities and fields as inferred.
-4. Do not generate backend API contracts here.
-5. Do not generate UI pages here.
-
-### 7.3 Stage 3: Flow Modeling
-
-Input:
-
-```ts
-{
-  sessionId: string;
-  upstreamArtifacts: {
-    input: InputUnderstanding;
-    product: ProductIntent;
-    users: UserModel;
-    domain: DomainModel;
-  };
-  flowPrinciples: {
-    flowBeforePages: true;
-    requireCompletionSignal: true;
-    requireFeedbackAndRecovery: true;
-  };
-}
-```
-
-Output:
-
-```ts
-{
   flows: FlowModel;
 }
 ```
@@ -419,10 +604,18 @@ Output:
 Purpose:
 
 ```text
-Generate Core User Flows and related supporting, side-effect, feedback, recovery, state transition, and dependency flows.
+Generate the domain model and behavioral flow model before any page contracts are created.
 ```
 
-Rules:
+Domain rules:
+
+1. Prefer entities implied by product goal and user roles.
+2. Do not introduce complex entities unless necessary for the MVP.
+3. Mark inferred entities and fields as inferred.
+4. Do not generate backend API contracts here.
+5. Do not generate UI pages here.
+
+Flow rules:
 
 1. Core User Flows must not be page lists.
 2. Each Core User Flow must include user goal, trigger, steps, system effects, feedback, recovery, completion signal, involved entities, and UI surface names.
@@ -431,8 +624,18 @@ Rules:
 5. Each Core User Flow must have at least one UI surface name, even if the actual page contract is generated later.
 6. Use conservative flow count when input is sparse.
 7. Do not create payment, account, collaboration, or integration flows unless explicitly requested or essential.
+8. Gate B must run before UI modeling.
 
-### 7.4 Stage 4: UI Modeling and Page Contracts
+### 7.4 Phase 3: UI Contract Model
+
+Stages:
+
+```text
+Stage 5: UI surfaces and page contracts
+Stage 6: Feedback, recovery, and completion-surface mapping
+Gate C: Flow-UI coverage check
+Optional light semantic review: UI contract quality only
+```
 
 Input:
 
@@ -444,6 +647,7 @@ Input:
     users: UserModel;
     domain: DomainModel;
     flows: FlowModel;
+    globalPolicySeed: GlobalGenerationPolicySeed;
   };
   uiRules: {
     everyPageSupportsFlow: true;
@@ -470,15 +674,24 @@ Derive application structure, navigation, page contracts, page sections, UI acti
 Rules:
 
 1. Derive pages from flows, not from visual imagination.
-2. Every page must support at least one existing flow ID.
+2. Every page must support at least one existing page-supportable flow ID.
 3. Every Core User Flow must be supported by at least one page.
-4. Every page must have at least one primary action unless it is purely a confirmation or read-only result page.
-5. Every primary action must have expected feedback.
+4. Every page must have at least one primary action unless it is purely a confirmation, terminal, or read-only result page.
+5. Every primary action must have expected feedback or a clear target.
 6. Completion signals must be visible in at least one page.
 7. Recovery paths must have UI surfaces if the related failure is user-visible.
 8. Do not include decorative visual details here except Stitch prompt hints. Use VisualPolicy for visual rules.
+9. Gate C must run before policy completion and blueprint assembly.
 
-### 7.5 Stage 5: Visual Policy, Generation Policy, Uncertainty
+### 7.5 Phase 4: Blueprint Assembly
+
+Stages:
+
+```text
+Stage 7: Visual policy, generation policy, uncertainty
+Stage 8: Blueprint assembly
+Gate D: Full deterministic validation
+```
 
 Input:
 
@@ -493,11 +706,7 @@ Input:
     domain: DomainModel;
     flows: FlowModel;
     ui: UIModel;
-  };
-  defaultPolicies: {
-    noFollowUpQuestions: true;
-    assumptionStrategy: "conservative_mvp";
-    forbidUiAsImage: true;
+    globalPolicySeed: GlobalGenerationPolicySeed;
   };
 }
 ```
@@ -509,13 +718,15 @@ Output:
   visualPolicy: VisualPolicy;
   generationPolicy: GenerationPolicy;
   uncertainty: UncertaintyModel;
+  blueprint: ProductBlueprintV1;
+  validationReport: ValidationReport;
 }
 ```
 
 Purpose:
 
 ```text
-Complete the generation constraints, Stitch visual constraints, and uncertainty/default decision model.
+Complete generation constraints, visual constraints, uncertainty/default decisions, and assemble the full ProductBlueprintV1 without reinterpreting raw input.
 ```
 
 Rules:
@@ -526,64 +737,23 @@ Rules:
 4. Images may be used as subtle decorative backgrounds or content images only.
 5. Every unresolved question must include a default decision.
 6. High-impact unresolved questions should usually default to exclude from MVP or safe placeholder behavior.
+7. Assembly must not rewrite prior artifacts unless schema-level normalization is required.
+8. Assembly must preserve IDs and references.
+9. Full deterministic validation must pass before full semantic quality review runs.
 
-### 7.6 Stage 6: Blueprint Assembly
+### 7.6 Phase 5: Quality and Targeted Repair
 
-Input:
-
-```ts
-{
-  sessionId: string;
-  artifacts: {
-    meta: BlueprintMeta;
-    input: InputUnderstanding;
-    product: ProductIntent;
-    users: UserModel;
-    domain: DomainModel;
-    flows: FlowModel;
-    ui: UIModel;
-    visualPolicy: VisualPolicy;
-    generationPolicy: GenerationPolicy;
-    uncertainty: UncertaintyModel;
-  };
-}
-```
-
-Output:
-
-```ts
-{
-  blueprint: ProductBlueprintV1;
-}
-```
-
-Purpose:
+Stages:
 
 ```text
-Assemble previously validated artifacts into one ProductBlueprintV1 object without reinterpreting the raw input.
+Stage 9: Semantic quality review
+Stage 10: Repair routing
+Stage 11A: Blueprint repair
+Stage 11B: Quality repair
+Gate E: Re-validation and affected-area re-review
 ```
 
-Rules:
-
-1. Do not rewrite prior artifacts unless schema-level normalization is required.
-2. Do not add new product scope.
-3. Do not change explicit facts.
-4. Preserve IDs and references.
-
-### 7.7 Stage 7: Validation
-
-Validation should be done programmatically, not primarily by the LLM.
-
-Two validation layers are required:
-
-1. schema validation;
-2. semantic validation.
-
-The output is a `ValidationReport` stored as an artifact. Only blueprints that pass deterministic validation may proceed to semantic quality review.
-
-### 7.8 Stage 8: Semantic Quality Review
-
-Semantic quality review runs after deterministic validation passes.
+Full semantic quality review runs only after deterministic validation passes.
 
 It is an LLM-assisted review stage, but it is not the final validity gate.
 Programmatic validation remains the authority for schema validity and deterministic semantic validity.
@@ -608,15 +778,13 @@ Output:
 
 ```ts
 {
-  review: SemanticQualityReviewReport;
+  qualityReview: BlueprintQualityReport;
+  repairPlan?: RepairPlan;
+  repairedBlueprint?: ProductBlueprintV1;
 }
 ```
 
-Purpose:
-
-```text
-Find blueprint issues that are structurally valid but semantically weak, misleading, vague, or inconsistent enough to degrade downstream Stitch or React generation.
-```
+Semantic quality review should find blueprint issues that are structurally valid but semantically weak, misleading, vague, or inconsistent enough to degrade downstream Stitch or React generation.
 
 Review scope examples:
 
@@ -628,16 +796,19 @@ Review scope examples:
 
 Rules:
 
-1. The stage must return structured issues, not a repaired blueprint.
-2. The stage must not decide final validity on its own.
-3. The stage must not change explicit user facts.
-4. The stage must not expand product scope.
-5. The stage must classify issues by severity, repairability, affected paths, rationale, and suggested fix.
-6. The stage must be used to inform repair routing, not to replace deterministic validation.
+1. The review stage must return structured issues, not a repaired blueprint.
+2. The review stage must not decide final validity on its own.
+3. The review stage must not change explicit user facts.
+4. The review stage must not expand product scope.
+5. The review stage must classify issues by severity, repairability, affected paths, rationale, and suggested fix.
+6. The review stage must be used to inform repair routing, not to replace deterministic validation.
+7. Quality blockers must be classified as `targeted_repairable` or `non_repairable`.
+8. Targeted-repairable blockers should enter `quality_repair` before session failure.
+9. Repair attempts must be bounded.
 
-### 7.9 Stage 9: Repair
+#### 7.6.1 Blueprint repair
 
-Repair runs only when validation fails or when semantic/quality review finds repairable issues.
+Use blueprint repair for schema or deterministic semantic defects.
 
 Input:
 
@@ -663,22 +834,41 @@ Output:
 }
 ```
 
-Rules:
+#### 7.6.2 Quality repair
 
-1. Repair must be routed by issue type. Do not allow one broad repair step to rewrite the whole blueprint.
-2. Use deterministic code repair first for structural, referential, policy, and other enumerable issues.
-3. Use LLM-assisted repair only for targeted semantic, wording, or local consistency issues that are difficult to repair deterministically.
-4. Fix only invalid, inconsistent, or explicitly reviewed fields.
-5. Do not change explicit user facts.
-6. Do not expand scope.
-7. Return the full corrected blueprint.
-8. Re-run validation after repair.
-9. Re-run semantic quality review after LLM-assisted repair or any repair that affects semantic interpretation.
-10. Limit repair attempts, for example max 2 attempts.
+Use quality repair for targeted quality review defects after schema and deterministic semantic validation have already passed.
 
-#### 7.9.1 Repair routing: code logic vs LLM
+Input:
 
-The system must explicitly separate what code repair is allowed to modify from what LLM-assisted repair is allowed to modify.
+```ts
+{
+  sessionId: string;
+  blueprintId: string;
+  validatedBlueprint: ProductBlueprintV1;
+  qualityReviewReport: BlueprintQualityReport;
+  targetedIssues: BlueprintQualityIssue[];
+  repairRules: {
+    doNotChangeExplicitFacts: true;
+    doNotExpandScope: true;
+    fixOnlyTargetedQualityIssues: true;
+    returnFullCorrectedBlueprint: true;
+  };
+}
+```
+
+Output:
+
+```ts
+{
+  blueprint: ProductBlueprintV1;
+}
+```
+
+Quality repair must return the full corrected blueprint so it can be persisted as a new blueprint version and revalidated.
+
+#### 7.6.3 Repair routing rules
+
+Repair must be routed by issue type.
 
 Use deterministic code repair for issues such as:
 
@@ -695,8 +885,6 @@ Use LLM-assisted repair only for issues such as:
 3. aligning domain, flow, UI, and uncertainty language when they are structurally legal but semantically inconsistent;
 4. local field-specificity improvements that need judgment but do not require broad restructuring.
 
-#### 7.9.2 LLM repair constraints
-
 LLM-assisted repair must be bounded.
 
 It must not:
@@ -709,26 +897,39 @@ It must not:
 6. reinterpret the product as a different product category;
 7. replace the whole blueprint when a local repair is sufficient.
 
-#### 7.9.3 Repair execution order
-
-Recommended repair order:
+Recommended repair execution order:
 
 ```text
 1. run deterministic validation
-2. if validation fails -> code repair first
-3. if deterministic validation passes -> run semantic_quality_review
-4. if semantic_quality_review or quality review finds targeted semantic issues -> LLM-assisted repair
-5. rerun deterministic validation
-6. rerun semantic_quality_review
-7. rerun code-driven quality review
-8. freeze only when required gates pass
+2. if validation fails -> code repair first, then bounded blueprint_repair if needed
+3. if deterministic validation passes -> run semantic quality review
+4. classify quality issues as no-op, warning, targeted_repairable, or non_repairable
+5. if targeted quality issues exist -> run quality_repair
+6. persist repaired blueprint as a new version
+7. rerun schema validation
+8. rerun deterministic semantic validation
+9. rerun quality review or affected-area semantic review
+10. freeze only when required gates pass
 ```
 
-### 7.10 Stage 10: Freeze
+### 7.7 Phase 6: Freeze
 
 After required validation and review gates pass, mark the blueprint as frozen.
 
 Downstream stages must consume the frozen `blueprintId`, not the raw user input.
+
+Freeze is allowed only when:
+
+```text
+schema validation passes
+deterministic semantic validation passes
+quality review passes or has no blocker/high misleading issues
+targeted-repairable blockers have either been repaired or explicitly downgraded with persisted rationale
+```
+
+Do not freeze a blueprint with unresolved blocker quality issues.
+
+Do not fail a session for targeted-repairable quality blockers until the quality repair loop has been attempted.
 
 ---
 
@@ -893,14 +1094,20 @@ Recommended defaults:
 
 ```text
 input_understanding: low
+product_frame: low
 domain_modeling: low
 flow_modeling: medium
+flow_quality_review: low
 ui_modeling: medium
+ui_contract_review: low
 policy_uncertainty: low
 blueprint_assembly: low
+deterministic_validation: low
 semantic_quality_review: medium
+repair_routing: low
 blueprint_repair: medium
 quality_repair: medium
+freeze: low
 ```
 
 ### 8.9 `temperature`
@@ -917,14 +1124,20 @@ Suggested initial limits:
 
 ```text
 input_understanding: 3000
+product_frame: 4000
 domain_modeling: 5000
 flow_modeling: 8000
+flow_quality_review: 3000
 ui_modeling: 8000
+ui_contract_review: 3000
 policy_uncertainty: 5000
 blueprint_assembly: 12000
+deterministic_validation: 2000
 semantic_quality_review: 6000
+repair_routing: 2000
 blueprint_repair: 12000
 quality_repair: 12000
+freeze: 1000
 ```
 
 If output is truncated, increase the limit or split the schema further.
@@ -1006,14 +1219,23 @@ type GenerationSession = {
 ```ts
 type SessionStatus =
   | "created"
-  | "input_analyzed"
+  | "input_contract_checked"
+  | "product_frame_generated"
+  | "intent_scope_checked"
   | "domain_generated"
   | "flows_generated"
+  | "domain_flow_checked"
   | "ui_generated"
+  | "flow_ui_checked"
   | "policy_generated"
   | "blueprint_assembled"
   | "validating"
+  | "validated"
+  | "quality_reviewing"
+  | "repair_routing"
   | "repairing"
+  | "quality_repairing"
+  | "quality_repaired"
   | "blueprint_frozen"
   | "stitch_generating"
   | "stitch_generated"
@@ -1029,13 +1251,22 @@ type StageRun = {
   stageRunId: string;
   sessionId: string;
   stage:
+    | "input_contract"
     | "input_understanding"
+    | "product_frame"
     | "domain_modeling"
     | "flow_modeling"
+    | "flow_quality_review"
     | "ui_modeling"
+    | "ui_contract_review"
     | "policy_uncertainty"
     | "blueprint_assembly"
-    | "blueprint_repair";
+    | "deterministic_validation"
+    | "semantic_quality_review"
+    | "repair_routing"
+    | "blueprint_repair"
+    | "quality_repair"
+    | "freeze";
 
   model: string;
   promptVersion: string;
@@ -1071,6 +1302,8 @@ type ArtifactRef = {
     | "uncertainty_model"
     | "product_blueprint"
     | "validation_report"
+    | "quality_review_report"
+    | "repair_plan"
     | "stitch_prompt"
     | "stitch_html"
     | "stitch_screenshot"
@@ -1089,7 +1322,7 @@ type BlueprintVersion = {
   blueprintId: string;
   sessionId: string;
   version: number;
-  status: "draft" | "repaired" | "validated" | "frozen" | "superseded";
+  status: "draft" | "repaired" | "quality_repaired" | "validated" | "frozen" | "superseded";
   createdFromStageRunIds: string[];
   artifactId: string;
   validationReportId?: string;
@@ -1181,7 +1414,7 @@ type BlueprintVersionRecord = {
   id: string;
   sessionId: string;
   version: number;
-  status: "draft" | "validated" | "frozen" | "superseded";
+  status: "draft" | "repaired" | "quality_repaired" | "validated" | "frozen" | "superseded";
   artifactId: string;
   validationReportId?: string;
   createdAt: string;

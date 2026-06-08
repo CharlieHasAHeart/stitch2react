@@ -1,20 +1,26 @@
 import { createId } from "../shared/ids.js";
-import type { ProductBlueprintV1, QualityIssue, QualityReviewReport } from "../types/blueprint.js";
+import type {
+  BlueprintQualityIssue,
+  BlueprintQualityReport,
+  ProductBlueprintV1
+} from "../types/blueprint.js";
 
 const requiredDesktopBreakpoints = ["1920x1080", "1440x900", "2560x1440"];
 
 function issue(
-  code: QualityIssue["code"],
+  code: BlueprintQualityIssue["code"],
   path: string,
   message: string,
-  severity: QualityIssue["severity"],
-  repairability: QualityIssue["repairability"],
-  suggestedFix?: string
-): QualityIssue {
-  return { code, path, message, severity, repairability, suggestedFix };
+  severity: BlueprintQualityIssue["severity"],
+  repairability: BlueprintQualityIssue["repairability"],
+  suggestedFix?: string,
+  affectedPaths?: string[],
+  rationale?: string
+): BlueprintQualityIssue {
+  return { code, path, message, severity, repairability, suggestedFix, affectedPaths, rationale };
 }
 
-function reviewAppStructure(blueprint: ProductBlueprintV1, issues: QualityIssue[]): void {
+function reviewAppStructure(blueprint: ProductBlueprintV1, issues: BlueprintQualityIssue[]): void {
   const shell = blueprint.ui.appStructure.shell;
   const pageCount = blueprint.ui.pages.length;
   const navigationType = blueprint.ui.navigation.type;
@@ -29,14 +35,16 @@ function reviewAppStructure(blueprint: ProductBlueprintV1, issues: QualityIssue[
           "AppStructure shell is wizard, but the blueprint lacks strong wizard evidence such as stepper-like navigation or explicit multi-step structure.",
           "blocker",
           "targeted_repairable",
-          "Adjust appStructure to match the existing linear form-to-result page structure without inventing wizard pages."
+          "Adjust appStructure to match the existing linear form-to-result page structure without inventing wizard pages.",
+          ["ui.appStructure.shell", "ui.navigation.type", "ui.pages"],
+          "Wizard shell without wizard structure misleads downstream implementation."
         )
       );
     }
   }
 }
 
-function reviewImmediateResultSemantics(blueprint: ProductBlueprintV1, issues: QualityIssue[]): void {
+function reviewImmediateResultSemantics(blueprint: ProductBlueprintV1, issues: BlueprintQualityIssue[]): void {
   const raw = blueprint.input.raw;
   const expectsImmediateResult = /看到结果|查看结果|结果/.test(raw);
   if (!expectsImmediateResult) {
@@ -59,13 +67,21 @@ function reviewImmediateResultSemantics(blueprint: ProductBlueprintV1, issues: Q
         "The blueprint weakens the user's immediate-result intent by allowing both quote-result and generic submission-feedback interpretations, which may mislead downstream generation.",
         "high",
         "targeted_repairable",
-        "Preserve the immediate visible result in successDefinition, primary flow completion signal, result page purpose, and default decisions."
+        "Preserve the immediate visible result in successDefinition, primary flow completion signal, result page purpose, and default decisions.",
+        [
+          "product.successDefinition",
+          "flows.coreUserFlows.0.completionSignal",
+          "ui.pages",
+          "uncertainty.assumptions",
+          "uncertainty.unresolvedQuestions"
+        ],
+        "The user explicitly asked to submit and see a result."
       )
     );
   }
 }
 
-function reviewPrimaryActionPolicy(blueprint: ProductBlueprintV1, issues: QualityIssue[]): void {
+function reviewPrimaryActionPolicy(blueprint: ProductBlueprintV1, issues: BlueprintQualityIssue[]): void {
   if (!blueprint.generationPolicy.stitchGenerationRules.requirePrimaryActionInEveryPage) {
     issues.push(
       issue(
@@ -74,7 +90,8 @@ function reviewPrimaryActionPolicy(blueprint: ProductBlueprintV1, issues: Qualit
         "Global primary-action policy is weakened without a strong reason. Keep the global rule strong and express readonly/result exceptions at the page-contract level.",
         "medium",
         "targeted_repairable",
-        "Set requirePrimaryActionInEveryPage to true and keep page-level readonly/confirmation semantics for exceptions."
+        "Set requirePrimaryActionInEveryPage to true and keep page-level readonly/confirmation semantics for exceptions.",
+        ["generationPolicy.stitchGenerationRules.requirePrimaryActionInEveryPage"]
       )
     );
   }
@@ -89,14 +106,15 @@ function reviewPrimaryActionPolicy(blueprint: ProductBlueprintV1, issues: Qualit
           "Readonly or confirmation pages should usually provide a useful next action such as edit details, start over, download result, copy result, continue, or go back.",
           "medium",
           "targeted_repairable",
-          "Add at least one useful secondary action on the result/confirmation page."
+          "Add at least one useful secondary action on the result/confirmation page.",
+          [`ui.pages.${page.id}.secondaryActions`]
         )
       );
     }
   }
 }
 
-function reviewDesktopResponsivePolicy(blueprint: ProductBlueprintV1, issues: QualityIssue[]): void {
+function reviewDesktopResponsivePolicy(blueprint: ProductBlueprintV1, issues: BlueprintQualityIssue[]): void {
   const { mobileFirst, breakpoints } = blueprint.ui.responsivePolicy;
   const missingBreakpoints = requiredDesktopBreakpoints.filter((value) => !breakpoints.includes(value));
 
@@ -108,7 +126,8 @@ function reviewDesktopResponsivePolicy(blueprint: ProductBlueprintV1, issues: Qu
         "This product is intended for desktop display, so responsive policy should not be mobile-first.",
         "high",
         "targeted_repairable",
-        "Set responsivePolicy.mobileFirst to false and define the required desktop resolutions."
+        "Set responsivePolicy.mobileFirst to false and define the required desktop resolutions.",
+        ["ui.responsivePolicy.mobileFirst", "ui.responsivePolicy.breakpoints"]
       )
     );
   }
@@ -121,18 +140,21 @@ function reviewDesktopResponsivePolicy(blueprint: ProductBlueprintV1, issues: Qu
         `Desktop-responsive policy is incomplete. Required resolution targets are ${requiredDesktopBreakpoints.join(", ")}, with 1920x1080 as the primary design baseline. Missing: ${missingBreakpoints.join(", ")}.`,
         "high",
         "targeted_repairable",
-        "Define desktop breakpoints for 1920x1080 as the primary baseline, then adapt the layout for 1440x900 and 2560x1440."
+        "Define desktop breakpoints for 1920x1080 as the primary baseline, then adapt the layout for 1440x900 and 2560x1440.",
+        ["ui.responsivePolicy.breakpoints", "generationPolicy.inferenceRules"]
       )
     );
   }
 }
 
-function reviewFieldSpecificity(blueprint: ProductBlueprintV1, issues: QualityIssue[]): void {
+function reviewFieldSpecificity(blueprint: ProductBlueprintV1, issues: BlueprintQualityIssue[]): void {
   const unresolvedExactInput = blueprint.uncertainty.unresolvedQuestions.some((item) =>
     item.id.includes("input_schema")
   );
   const genericFormData = blueprint.domain.entities.some(
-    (entity) => entity.id === "quote_request" && entity.fields.some((field) => field.name === "formData" && field.type === "object")
+    (entity) =>
+      entity.id === "quote_request" &&
+      entity.fields.some((field) => field.name === "formData" && field.type === "object")
   );
 
   if (unresolvedExactInput && genericFormData) {
@@ -143,7 +165,8 @@ function reviewFieldSpecificity(blueprint: ProductBlueprintV1, issues: QualityIs
         "The blueprint is still highly generic about required quote-request fields. Downstream generation may need stronger field assumptions or explicit placeholders to avoid vague UI output.",
         "medium",
         "targeted_repairable",
-        "Clarify the minimum quote-request input fields or document strong placeholder assumptions."
+        "Clarify the minimum quote-request input fields or document strong placeholder assumptions.",
+        ["domain.entities.quote_request.fields", "uncertainty.unresolvedQuestions"]
       )
     );
   }
@@ -153,8 +176,8 @@ export function reviewBlueprintQuality(
   sessionId: string,
   blueprintId: string,
   blueprint: ProductBlueprintV1
-): QualityReviewReport {
-  const issues: QualityIssue[] = [];
+): BlueprintQualityReport {
+  const issues: BlueprintQualityIssue[] = [];
 
   reviewAppStructure(blueprint, issues);
   reviewImmediateResultSemantics(blueprint, issues);
@@ -169,7 +192,7 @@ export function reviewBlueprintQuality(
     id: createId("qrev"),
     sessionId,
     blueprintId,
-    passes: !hasBlocker && !hasHigh,
+    passed: !hasBlocker && !hasHigh,
     issues,
     createdAt: new Date().toISOString()
   };

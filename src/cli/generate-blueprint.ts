@@ -2,6 +2,7 @@ import { rmSync } from "node:fs";
 import { resolve } from "node:path";
 import { ZodError } from "zod";
 import { generateBlueprintFromInput } from "../blueprint/pipeline/generate-blueprint.js";
+import type { StageEvent } from "../blueprint/stages/stage-runner.js";
 import { readOpenAIEnv } from "../blueprint/shared/env.js";
 
 function formatCliError(error: unknown): string {
@@ -28,6 +29,31 @@ function clearPreviousArtifacts(): void {
   rmSync(artifactsRoot, { recursive: true, force: true });
 }
 
+function formatDuration(durationMs: number): string {
+  return `${(durationMs / 1000).toFixed(1)}s`;
+}
+
+function logStageEvent(event: StageEvent): void {
+  if (event.type === "start") {
+    process.stderr.write(`[${event.sessionId}] ${event.stageRunId} START ${event.stage}
+`);
+    return;
+  }
+
+  if (event.type === "success") {
+    process.stderr.write(
+      `[${event.sessionId}] ${event.stageRunId} DONE ${event.stage} in ${formatDuration(event.durationMs)} -> ${event.outputArtifactId}
+`
+    );
+    return;
+  }
+
+  process.stderr.write(
+    `[${event.sessionId}] ${event.stageRunId} FAIL ${event.stage} in ${formatDuration(event.durationMs)}: ${event.error}
+`
+  );
+}
+
 async function main(): Promise<void> {
   readOpenAIEnv();
 
@@ -38,7 +64,9 @@ async function main(): Promise<void> {
 
   clearPreviousArtifacts();
 
-  const result = await generateBlueprintFromInput(rawInput);
+  const result = await generateBlueprintFromInput(rawInput, {
+    onStageEvent: logStageEvent
+  });
   process.stdout.write(
     `${JSON.stringify(
       {

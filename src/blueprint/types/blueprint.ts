@@ -332,6 +332,14 @@ export type GenerationPolicy = {
   };
 };
 
+export type GlobalGenerationPolicySeed = {
+  noFollowUpQuestions: true;
+  assumptionStrategy: "conservative_mvp";
+  forbidUiAsImage: true;
+  explicitBeatsInferred: true;
+  doNotExpandScope: true;
+};
+
 export type Assumption = {
   id: string;
   question: string;
@@ -358,29 +366,67 @@ export type ProductBlueprintV1 = {
   uncertainty: UncertaintyModel;
 };
 
+export type PipelinePhase =
+  | "session_input_contract"
+  | "product_frame"
+  | "product_behavior_model"
+  | "ui_contract_model"
+  | "blueprint_assembly"
+  | "quality_and_repair"
+  | "freeze";
+
+export type PipelineGate =
+  | "input_contract"
+  | "intent_scope"
+  | "domain_flow_consistency"
+  | "flow_ui_coverage"
+  | "full_deterministic_validation"
+  | "quality_revalidation";
+
 export type BlueprintStage =
+  | "input_contract"
   | "input_understanding"
+  | "product_frame"
   | "domain_modeling"
   | "flow_modeling"
+  | "flow_quality_review"
   | "ui_modeling"
+  | "ui_contract_review"
   | "policy_uncertainty"
   | "blueprint_assembly"
+  | "deterministic_validation"
+  | "semantic_quality_review"
+  | "repair_routing"
   | "blueprint_repair"
-  | "quality_repair";
+  | "quality_repair"
+  | "freeze";
 
 export type SessionStatus =
-  | "draft"
+  | "created"
+  | "input_contract_checked"
+  | "product_frame_generated"
+  | "intent_scope_checked"
+  | "domain_generated"
+  | "flows_generated"
+  | "domain_flow_checked"
+  | "ui_generated"
+  | "flow_ui_checked"
+  | "policy_generated"
+  | "blueprint_assembled"
   | "validating"
-  | "repairing"
   | "validated"
   | "quality_reviewing"
+  | "repair_routing"
+  | "repairing"
   | "quality_repairing"
   | "quality_repaired"
-  | "frozen"
+  | "blueprint_frozen"
   | "failed";
 
 export type ArtifactType =
   | "raw_input"
+  | "global_policy_seed"
+  | "gate_report"
   | "input_understanding"
   | "product_intent"
   | "user_model"
@@ -392,11 +438,13 @@ export type ArtifactType =
   | "uncertainty_model"
   | "blueprint"
   | "validation_report"
-  | "quality_review_report";
+  | "quality_review_report"
+  | "repair_plan";
 
 export type BlueprintVersionStatus =
   | "draft"
   | "repaired"
+  | "quality_repaired"
   | "validated"
   | "frozen"
   | "superseded";
@@ -405,7 +453,9 @@ export type GenerationSession = {
   id: string;
   status: SessionStatus;
   rawInputArtifactId: string;
+  globalPolicySeedArtifactId?: string;
   activeBlueprintId?: string;
+  error?: string;
   createdAt: string;
   updatedAt: string;
 };
@@ -446,48 +496,125 @@ export type BlueprintVersion = {
   createdAt: string;
 };
 
-export type ValidationIssueSeverity = "error" | "warning";
+export type GateIssueSeverity = "error" | "warning";
 
-export type ValidationIssue = {
+export type GateIssue = {
+  severity: GateIssueSeverity;
+  code: string;
   path: string;
   message: string;
+  suggestedFix?: string;
+};
+
+export type GateContext = {
+  layer: "session" | "product_frame" | "flow" | "ui" | "blueprint" | "quality";
+  kind: "structural" | "light_review" | "deterministic_validation" | "quality_revalidation";
+  sourceStage?: BlueprintStage;
+};
+
+export type GateReport = {
+  id: string;
+  gate: PipelineGate;
+  context: GateContext;
+  sessionId: string;
+  inputArtifactIds: string[];
+  passed: boolean;
+  issues: GateIssue[];
+  createdAt: string;
+};
+
+export type ValidationIssueSeverity = "error" | "warning";
+export type Repairability = "not_needed" | "targeted_repairable" | "non_repairable";
+
+export type ValidationIssue = {
   severity: ValidationIssueSeverity;
+  code: string;
+  path: string;
+  message: string;
+  suggestedFix?: string;
+  repairability?: Repairability;
 };
 
 export type ValidationReport = {
   id: string;
+  validationId: string;
   sessionId: string;
-  blueprintId: string;
+  blueprintId?: string;
   schemaValid: boolean;
   semanticValid: boolean;
   issues: ValidationIssue[];
   createdAt: string;
 };
 
-export type QualityIssueSeverity = "blocker" | "high" | "medium" | "low";
-export type QualityIssueRepairability = "targeted_repairable" | "non_repairable";
-export type QualityIssueCode =
+export type BlueprintQualityIssueSeverity = "blocker" | "high" | "medium" | "low";
+export type BlueprintQualityIssueCode =
   | "app_structure_mismatch"
   | "explicit_outcome_weakened"
   | "primary_action_policy_weak"
   | "missing_result_page_action"
   | "desktop_resolution_policy_missing"
-  | "generic_field_specificity";
+  | "generic_field_specificity"
+  | "flow_quality_weak"
+  | "ui_contract_ambiguous"
+  | "uncertainty_default_misleading"
+  | "other";
 
-export type QualityIssue = {
-  code: QualityIssueCode;
+export type BlueprintQualityIssue = {
+  severity: BlueprintQualityIssueSeverity;
+  code: BlueprintQualityIssueCode;
   path: string;
   message: string;
-  severity: QualityIssueSeverity;
-  repairability: QualityIssueRepairability;
+  affectedPaths?: string[];
+  rationale?: string;
   suggestedFix?: string;
+  repairability: Repairability;
 };
 
-export type QualityReviewReport = {
+export type BlueprintQualityReport = {
   id: string;
   sessionId: string;
   blueprintId: string;
-  passes: boolean;
-  issues: QualityIssue[];
+  passed: boolean;
+  issues: BlueprintQualityIssue[];
   createdAt: string;
 };
+
+export type RepairRoute =
+  | "no_repair_needed"
+  | "code_schema_repair"
+  | "code_reference_repair"
+  | "code_policy_repair"
+  | "llm_semantic_local_repair"
+  | "quality_repair"
+  | "manual_blocking_issue";
+
+export type RepairPlan = {
+  id: string;
+  sessionId: string;
+  blueprintId: string;
+  route: RepairRoute;
+  source: "gate_report" | "validation_report" | "quality_review_report";
+  sourceReportId?: string;
+  sourceGate?: PipelineGate;
+  sourceGateContext?: GateContext;
+  sourceIssueCodes: string[];
+  affectedPaths: string[];
+  rationale: string;
+  maxAttempts: number;
+  createdAt: string;
+};
+
+export type FreezeEligibility = {
+  sessionId: string;
+  blueprintId: string;
+  schemaValid: boolean;
+  semanticValid: boolean;
+  qualityPassed: boolean;
+  unresolvedBlockers: BlueprintQualityIssue[];
+  unresolvedHighMisleadingIssues: BlueprintQualityIssue[];
+  canFreeze: boolean;
+  rationale: string;
+};
+
+export type QualityIssue = BlueprintQualityIssue;
+export type QualityReviewReport = BlueprintQualityReport;

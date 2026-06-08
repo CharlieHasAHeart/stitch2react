@@ -2,12 +2,14 @@ import { checksumJson } from "../shared/hash.js";
 import { createId } from "../shared/ids.js";
 import type {
   ArtifactType,
+  BlueprintQualityReport,
   BlueprintVersion,
   BlueprintVersionStatus,
+  GateReport,
   GenerationArtifact,
   GenerationSession,
   GenerationStageRun,
-  QualityReviewReport,
+  RepairPlan,
   SessionStatus,
   ValidationReport
 } from "../types/blueprint.js";
@@ -23,7 +25,7 @@ export class BlueprintRepository {
   createSession(rawInputArtifactId = ""): GenerationSession {
     const session: GenerationSession = {
       id: createId("sess"),
-      status: "draft",
+      status: "created",
       rawInputArtifactId,
       createdAt: nowIso(),
       updatedAt: nowIso()
@@ -95,10 +97,7 @@ export class BlueprintRepository {
     return version;
   }
 
-  updateBlueprintVersion(
-    blueprintId: string,
-    patch: Partial<BlueprintVersion>
-  ): BlueprintVersion {
+  updateBlueprintVersion(blueprintId: string, patch: Partial<BlueprintVersion>): BlueprintVersion {
     const existing = this.requireBlueprintVersion(blueprintId);
     const updated = { ...existing, ...patch };
     this.store.saveBlueprintVersion(updated);
@@ -125,9 +124,19 @@ export class BlueprintRepository {
     return report;
   }
 
-  saveQualityReviewReport(report: QualityReviewReport): QualityReviewReport {
+  saveQualityReviewReport(report: BlueprintQualityReport): BlueprintQualityReport {
     this.store.saveQualityReviewReport(report);
     return report;
+  }
+
+  saveGateReport(report: GateReport): GateReport {
+    this.store.saveGateReport(report);
+    return report;
+  }
+
+  saveRepairPlan(plan: RepairPlan): RepairPlan {
+    this.store.saveRepairPlan(plan);
+    return plan;
   }
 
   requireSession(sessionId: string): GenerationSession {
@@ -170,6 +179,22 @@ export class BlueprintRepository {
 
   listArtifacts(sessionId: string): GenerationArtifact[] {
     return Object.values(this.store.collections.artifacts).filter(
+      (item) => item.sessionId === sessionId
+    );
+  }
+
+  listSessions(): GenerationSession[] {
+    return Object.values(this.store.collections.sessions);
+  }
+
+  listGateReports(sessionId: string): GateReport[] {
+    return Object.values(this.store.collections.gateReports).filter(
+      (item) => item.sessionId === sessionId
+    );
+  }
+
+  listRepairPlans(sessionId: string): RepairPlan[] {
+    return Object.values(this.store.collections.repairPlans).filter(
       (item) => item.sessionId === sessionId
     );
   }

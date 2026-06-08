@@ -18,17 +18,46 @@ type StageRunnerInput<T> = {
   }) => Promise<{ output: unknown; openaiResponseId?: string }>;
   artifactType: ArtifactType;
   inputArtifactIds: string[];
+  onStageEvent?: (event: StageEvent) => void;
 };
 
 function nowIso(): string {
   return new Date().toISOString();
 }
 
+export type StageEvent =
+  | {
+      type: "start";
+      sessionId: string;
+      stageRunId: string;
+      stage: BlueprintStage;
+      model: string;
+      inputArtifactIds: string[];
+    }
+  | {
+      type: "success";
+      sessionId: string;
+      stageRunId: string;
+      stage: BlueprintStage;
+      durationMs: number;
+      outputArtifactId: string;
+      openaiResponseId?: string;
+    }
+  | {
+      type: "failure";
+      sessionId: string;
+      stageRunId: string;
+      stage: BlueprintStage;
+      durationMs: number;
+      error: string;
+    };
+
 export async function runBlueprintStage<T>(
   repository: BlueprintRepository,
   input: StageRunnerInput<T>
 ): Promise<{ output: T; stageRun: GenerationStageRun; artifactId: string }> {
   const stageRunId = createId("stage");
+  const startedAt = Date.now();
   repository.createStageRun({
     id: stageRunId,
     sessionId: input.sessionId,
@@ -39,6 +68,15 @@ export async function runBlueprintStage<T>(
     status: "pending",
     createdAt: nowIso(),
     updatedAt: nowIso()
+  });
+
+  input.onStageEvent?.({
+    type: "start",
+    sessionId: input.sessionId,
+    stageRunId,
+    stage: input.stage,
+    model: input.model,
+    inputArtifactIds: input.inputArtifactIds
   });
 
   try {
@@ -54,15 +92,34 @@ export async function runBlueprintStage<T>(
       status: "completed"
     });
 
+    input.onStageEvent?.({
+      type: "success",
+      sessionId: input.sessionId,
+      stageRunId,
+      stage: input.stage,
+      durationMs: Date.now() - startedAt,
+      outputArtifactId: artifact.id,
+      openaiResponseId: result.openaiResponseId
+    });
+
     return {
       output: parsed,
       stageRun: updatedStageRun,
       artifactId: artifact.id
     };
   } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
     repository.updateStageRun(stageRunId, {
       status: "failed",
-      error: error instanceof Error ? error.message : String(error)
+      error: message
+    });
+    input.onStageEvent?.({
+      type: "failure",
+      sessionId: input.sessionId,
+      stageRunId,
+      stage: input.stage,
+      durationMs: Date.now() - startedAt,
+      error: message
     });
     throw error;
   }

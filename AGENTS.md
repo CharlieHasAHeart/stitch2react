@@ -133,70 +133,136 @@ Implement the pipeline as explicit JSON artifact passing.
 
 Do not rely on implicit model conversation state.
 
-The required stages are:
+The required organization is **phase + gate + repair routing**, not a single linear generate-everything chain.
 
-1. `input_understanding`
-   - Output:
-     - `InputUnderstanding`
-     - `ProductIntent`
-     - `UserModel`
+```text
+Phase 0: Session and input contract
+  Stage: input_contract
+  Output:
+    - raw input artifact
+    - GlobalGenerationPolicySeed
+  Gate: input_contract
 
-2. `domain_modeling`
-   - Input:
-     - raw input
-     - input understanding
-     - product intent
-     - user model
-   - Output:
-     - `DomainModel`
+Phase 1: Product frame
+  Stages:
+    - input_understanding
+    - product_frame
+  Output:
+    - InputUnderstanding
+    - ProductIntent
+    - UserModel
+  Gate: intent_scope
 
-3. `flow_modeling`
-   - Input:
-     - input understanding
-     - product intent
-     - user model
-     - domain model
-   - Output:
-     - `FlowModel`
+Phase 2: Product behavior model
+  Stages:
+    - domain_modeling
+    - flow_modeling
+    - optional flow_quality_review
+  Output:
+    - DomainModel
+    - FlowModel
+  Gate: domain_flow_consistency
 
-4. `ui_modeling`
-   - Input:
-     - product intent
-     - user model
-     - domain model
-     - flow model
-   - Output:
-     - `UIModel`
+Phase 3: UI contract model
+  Stages:
+    - ui_modeling
+    - optional ui_contract_review
+  Output:
+    - UIModel
+  Gate: flow_ui_coverage
 
-5. `policy_uncertainty`
-   - Input:
-     - all prior artifacts
-   - Output:
-     - `VisualPolicy`
-     - `GenerationPolicy`
-     - `UncertaintyModel`
+Phase 4: Blueprint assembly
+  Stages:
+    - policy_uncertainty
+    - blueprint_assembly
+    - deterministic_validation
+  Output:
+    - VisualPolicy
+    - GenerationPolicy
+    - UncertaintyModel
+    - ProductBlueprintV1
+    - ValidationReport
+  Gate: full_deterministic_validation
 
-6. `blueprint_assembly`
-   - Input:
-     - all prior artifacts
-   - Output:
-     - `ProductBlueprintV1`
+Phase 5: Quality and targeted repair
+  Stages:
+    - semantic_quality_review
+    - repair_routing
+    - blueprint_repair, when schema or deterministic semantic validation fails
+    - quality_repair, when quality review finds targeted-repairable issues
+  Output:
+    - BlueprintQualityReport
+    - RepairPlan, when needed
+    - repaired ProductBlueprintV1, when needed
+  Gate: quality_revalidation
 
-7. `validation`
-   - Use programmatic validation.
-   - Do not rely on the model to declare validity.
+Phase 6: Freeze
+  Stage:
+    - freeze
+  Output:
+    - frozen ProductBlueprintV1
+```
 
-8. `blueprint_repair`
-   - Run only if validation fails.
-   - Repair only invalid or inconsistent fields.
-   - Do not change explicit user facts.
-   - Do not expand scope.
-   - Return the full corrected `ProductBlueprintV1`.
+### Gate behavior
 
-9. `freeze`
-   - Mark the validated blueprint as frozen.
-   - Set it as the active blueprint for the session.
-   - Require all downstream generation to reference the frozen blueprint.
+Codex must not move to the next dependency layer when the current gate has blocking issues.
+
+Use these gates:
+
+```text
+input_contract
+intent_scope
+domain_flow_consistency
+flow_ui_coverage
+full_deterministic_validation
+quality_revalidation
+```
+
+Gate responsibilities:
+
+- `input_contract`: one-shot mode, raw input artifact, and global generation policy seed exist.
+- `intent_scope`: explicit constraints are preserved and conservative MVP scope is respected.
+- `domain_flow_consistency`: flows are grounded in product intent, user model, and domain model.
+- `flow_ui_coverage`: pages support valid flow ids and core flows have visible UI surfaces.
+- `full_deterministic_validation`: schema and deterministic semantic validation pass.
+- `quality_revalidation`: post-repair schema, semantic, and quality checks pass.
+
+### Early global policy seed
+
+Before any LLM stage, create or pass a policy seed equivalent to:
+
+```text
+noFollowUpQuestions = true
+assumptionStrategy = conservative_mvp
+forbidUiAsImage = true
+explicitBeatsInferred = true
+doNotExpandScope = true
+```
+
+This policy constrains every generation stage. Do not wait until `policy_uncertainty` to enforce it.
+
+### Repair routing
+
+Repair is a router, not a broad rewrite stage.
+
+Use these routes or equivalent internal names:
+
+```text
+no_repair_needed
+code_schema_repair
+code_reference_repair
+code_policy_repair
+llm_semantic_local_repair
+quality_repair
+manual_blocking_issue
+```
+
+`blueprint_repair` is for schema or deterministic semantic defects.
+
+`quality_repair` is for targeted quality defects after schema and deterministic semantic validation have already passed.
+
+Do not use broad full-blueprint regeneration when a local targeted repair is sufficient.
+
 
 ## Responses API Usage
 
@@ -442,17 +508,23 @@ If repair fails after max attempts:
 ## Freeze Rule
 
 A blueprint can be frozen only after:
+
 - schema validation passes
-- semantic validation passes
-- repair is not needed or repair has passed validation
+- deterministic semantic validation passes
+- quality review passes or has no unresolved blocker / high misleading issues
+- repair is not needed, or repair has passed validation and affected-area quality review
+- all targeted-repairable quality blockers have either been repaired or explicitly downgraded with persisted rationale
 
 After freeze:
+
 - set `session.activeBlueprintId`
 - mark the blueprint version as `frozen`
 - mark previous non-frozen versions as `superseded` where appropriate
 - prevent downstream generation from using raw input as the primary source
 
+Do not freeze a blueprint with unresolved blocker quality issues.
 
+Do not fail a session for targeted-repairable quality blockers until bounded `quality_repair` has been attempted.
 
 ## Blueprint Quality Review Requirements
 
@@ -831,13 +903,17 @@ When asked to implement this system, proceed in this order:
 4. Implement persistence records and artifact storage.
 5. Implement `runBlueprintStage`.
 6. Implement stage prompts.
-7. Implement stage execution order.
+7. Implement phase/gate execution order.
 8. Implement schema validation.
-9. Implement semantic validation.
-10. Implement bounded repair.
-11. Implement freeze behavior.
-12. Add tests for validation and repair.
-13. Add minimal integration test for a one-line product input.
+9. Implement deterministic semantic validation.
+10. Implement gate reports.
+11. Implement semantic quality review.
+12. Implement repair routing.
+13. Implement bounded `blueprint_repair`.
+14. Implement bounded `quality_repair`.
+15. Implement freeze behavior.
+16. Add tests for validation, quality review, and repair.
+17. Add minimal integration test for a one-line product input.
 
 ## Testing Requirements
 

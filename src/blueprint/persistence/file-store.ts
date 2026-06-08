@@ -1,11 +1,13 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import type {
+  BlueprintQualityReport,
   BlueprintVersion,
+  GateReport,
   GenerationArtifact,
   GenerationSession,
   GenerationStageRun,
-  QualityReviewReport,
+  RepairPlan,
   ValidationReport
 } from "../types/blueprint.js";
 
@@ -15,7 +17,9 @@ export type FileStoreCollections = {
   artifacts: Record<string, GenerationArtifact>;
   blueprintVersions: Record<string, BlueprintVersion>;
   validationReports: Record<string, ValidationReport>;
-  qualityReviewReports: Record<string, QualityReviewReport>;
+  qualityReviewReports: Record<string, BlueprintQualityReport>;
+  gateReports: Record<string, GateReport>;
+  repairPlans: Record<string, RepairPlan>;
 };
 
 function ensureDir(path: string): void {
@@ -42,6 +46,8 @@ export class FileBlueprintStore {
   readonly blueprintVersionsDir: string;
   readonly validationReportsDir: string;
   readonly qualityReviewReportsDir: string;
+  readonly gateReportsDir: string;
+  readonly repairPlansDir: string;
   readonly indexesDir: string;
 
   collections: FileStoreCollections;
@@ -54,6 +60,8 @@ export class FileBlueprintStore {
     this.blueprintVersionsDir = join(rootDir, "blueprint_versions");
     this.validationReportsDir = join(rootDir, "validation_reports");
     this.qualityReviewReportsDir = join(rootDir, "quality_review_reports");
+    this.gateReportsDir = join(rootDir, "gate_reports");
+    this.repairPlansDir = join(rootDir, "repair_plans");
     this.indexesDir = join(rootDir, "indexes");
 
     ensureDir(this.sessionsDir);
@@ -62,6 +70,8 @@ export class FileBlueprintStore {
     ensureDir(this.blueprintVersionsDir);
     ensureDir(this.validationReportsDir);
     ensureDir(this.qualityReviewReportsDir);
+    ensureDir(this.gateReportsDir);
+    ensureDir(this.repairPlansDir);
     ensureDir(this.indexesDir);
 
     this.collections = {
@@ -70,14 +80,18 @@ export class FileBlueprintStore {
       artifacts: readJson(join(this.indexesDir, "artifacts.json"), {}),
       blueprintVersions: readJson(join(this.indexesDir, "blueprint-versions.json"), {}),
       validationReports: readJson(join(this.indexesDir, "validation-reports.json"), {}),
-      qualityReviewReports: readJson(join(this.indexesDir, "quality-review-reports.json"), {})
+      qualityReviewReports: readJson(join(this.indexesDir, "quality-review-reports.json"), {}),
+      gateReports: readJson(join(this.indexesDir, "gate-reports.json"), {}),
+      repairPlans: readJson(join(this.indexesDir, "repair-plans.json"), {})
     };
   }
 
   artifactVersion(sessionId: string, artifactType: GenerationArtifact["artifactType"]): number {
-    return Object.values(this.collections.artifacts).filter(
-      (artifact) => artifact.sessionId === sessionId && artifact.artifactType === artifactType
-    ).length + 1;
+    return (
+      Object.values(this.collections.artifacts).filter(
+        (artifact) => artifact.sessionId === sessionId && artifact.artifactType === artifactType
+      ).length + 1
+    );
   }
 
   blueprintVersion(sessionId: string): number {
@@ -121,9 +135,21 @@ export class FileBlueprintStore {
     writeJson(join(this.indexesDir, "validation-reports.json"), this.collections.validationReports);
   }
 
-  saveQualityReviewReport(report: QualityReviewReport): void {
+  saveQualityReviewReport(report: BlueprintQualityReport): void {
     this.collections.qualityReviewReports[report.id] = report;
     writeJson(join(this.qualityReviewReportsDir, `${report.id}.json`), report);
     writeJson(join(this.indexesDir, "quality-review-reports.json"), this.collections.qualityReviewReports);
+  }
+
+  saveGateReport(report: GateReport): void {
+    this.collections.gateReports[report.id] = report;
+    writeJson(join(this.gateReportsDir, `${report.id}.json`), report);
+    writeJson(join(this.indexesDir, "gate-reports.json"), this.collections.gateReports);
+  }
+
+  saveRepairPlan(plan: RepairPlan): void {
+    this.collections.repairPlans[plan.id] = plan;
+    writeJson(join(this.repairPlansDir, `${plan.id}.json`), plan);
+    writeJson(join(this.indexesDir, "repair-plans.json"), this.collections.repairPlans);
   }
 }
