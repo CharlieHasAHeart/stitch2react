@@ -1552,38 +1552,46 @@ export async function generateBlueprintFromInput(
 
     repository.setSessionStatus(sessionId, "repairing");
     const locallyRepaired = repairBlueprint(activeBlueprint, validationReport);
-    const repairStage = await runBlueprintStage(repository, {
-      model,
-      sessionId,
-      stage: "blueprint_repair",
-      promptVersion: STAGE_PROMPT_VERSION,
-      instructions: stageInstructions.blueprint_repair,
-      payload: {
-        blueprint: locallyRepaired,
-        issues: validationReport.issues,
-        repairPlan
-      },
-      schema: productBlueprintSchema,
-      schemaName: "ProductBlueprintV1",
-      execute: ({ payload, stageRunId }) =>
-        stageClient.runStage({
-          model,
-          sessionId,
-          stage: "blueprint_repair",
-          stageRunId,
-          promptVersion: STAGE_PROMPT_VERSION,
-          instructions: stageInstructions.blueprint_repair,
-          payload,
-          schema: productBlueprintSchema,
-          schemaName: "ProductBlueprintV1"
-        }),
-      artifactType: "blueprint",
-      inputArtifactIds: [blueprintArtifactId],
-      onStageEvent
-    });
 
-    activeBlueprint = repairStage.output;
-    blueprintArtifactId = repairStage.artifactId;
+    if (!experimentalLlmRepair) {
+      activeBlueprint = locallyRepaired;
+      const repairedArtifact = repository.saveArtifact(sessionId, "blueprint", activeBlueprint);
+      blueprintArtifactId = repairedArtifact.id;
+    } else {
+      const repairStage = await runBlueprintStage(repository, {
+        model,
+        sessionId,
+        stage: "blueprint_repair",
+        promptVersion: STAGE_PROMPT_VERSION,
+        instructions: stageInstructions.blueprint_repair,
+        payload: {
+          blueprint: locallyRepaired,
+          issues: validationReport.issues,
+          repairPlan
+        },
+        schema: productBlueprintSchema,
+        schemaName: "ProductBlueprintV1",
+        execute: ({ payload, stageRunId }) =>
+          stageClient.runStage({
+            model,
+            sessionId,
+            stage: "blueprint_repair",
+            stageRunId,
+            promptVersion: STAGE_PROMPT_VERSION,
+            instructions: stageInstructions.blueprint_repair,
+            payload,
+            schema: productBlueprintSchema,
+            schemaName: "ProductBlueprintV1"
+          }),
+        artifactType: "blueprint",
+        inputArtifactIds: [blueprintArtifactId],
+        onStageEvent
+      });
+
+      activeBlueprint = repairStage.output;
+      blueprintArtifactId = repairStage.artifactId;
+    }
+
     blueprintVersion = repository.createBlueprintVersion(sessionId, blueprintArtifactId, "repaired");
     repository.setSessionStatus(sessionId, "validating");
     validationReport = validateBlueprint(sessionId, blueprintVersion.id, activeBlueprint);

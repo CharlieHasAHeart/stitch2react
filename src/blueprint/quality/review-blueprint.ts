@@ -44,43 +44,6 @@ function reviewAppStructure(blueprint: ProductBlueprintV1, issues: BlueprintQual
   }
 }
 
-function reviewImmediateResultSemantics(blueprint: ProductBlueprintV1, issues: BlueprintQualityIssue[]): void {
-  const raw = blueprint.input.raw;
-  const expectsImmediateResult = /看到结果|查看结果|结果/.test(raw);
-  if (!expectsImmediateResult) {
-    return;
-  }
-
-  const ambiguousResultSignals = [
-    blueprint.input.normalizedSummary.value,
-    blueprint.product.primaryValueProposition.value,
-    blueprint.product.successDefinition.value,
-    ...blueprint.uncertainty.assumptions.map((item) => item.defaultDecision),
-    ...blueprint.uncertainty.unresolvedQuestions.map((item) => item.defaultDecision)
-  ].join(" ");
-
-  if (/申请结果反馈/.test(ambiguousResultSignals) && /报价结果/.test(ambiguousResultSignals)) {
-    issues.push(
-      issue(
-        "explicit_outcome_weakened",
-        "product.successDefinition",
-        "The blueprint weakens the user's immediate-result intent by allowing both quote-result and generic submission-feedback interpretations, which may mislead downstream generation.",
-        "high",
-        "targeted_repairable",
-        "Preserve the immediate visible result in successDefinition, primary flow completion signal, result page purpose, and default decisions.",
-        [
-          "product.successDefinition",
-          "flows.coreUserFlows.0.completionSignal",
-          "ui.pages",
-          "uncertainty.assumptions",
-          "uncertainty.unresolvedQuestions"
-        ],
-        "The user explicitly asked to submit and see a result."
-      )
-    );
-  }
-}
-
 function reviewPrimaryActionPolicy(blueprint: ProductBlueprintV1, issues: BlueprintQualityIssue[]): void {
   if (!blueprint.generationPolicy.stitchGenerationRules.requirePrimaryActionInEveryPage) {
     issues.push(
@@ -147,31 +110,6 @@ function reviewDesktopResponsivePolicy(blueprint: ProductBlueprintV1, issues: Bl
   }
 }
 
-function reviewFieldSpecificity(blueprint: ProductBlueprintV1, issues: BlueprintQualityIssue[]): void {
-  const unresolvedExactInput = blueprint.uncertainty.unresolvedQuestions.some((item) =>
-    item.id.includes("input_schema")
-  );
-  const genericFormData = blueprint.domain.entities.some(
-    (entity) =>
-      entity.id === "quote_request" &&
-      entity.fields.some((field) => field.name === "formData" && field.type === "object")
-  );
-
-  if (unresolvedExactInput && genericFormData) {
-    issues.push(
-      issue(
-        "generic_field_specificity",
-        "domain.entities.quote_request.fields.formData",
-        "The blueprint is still highly generic about required quote-request fields. Downstream generation may need stronger field assumptions or explicit placeholders to avoid vague UI output.",
-        "medium",
-        "targeted_repairable",
-        "Clarify the minimum quote-request input fields or document strong placeholder assumptions.",
-        ["domain.entities.quote_request.fields", "uncertainty.unresolvedQuestions"]
-      )
-    );
-  }
-}
-
 export function reviewBlueprintQuality(
   sessionId: string,
   blueprintId: string,
@@ -179,11 +117,12 @@ export function reviewBlueprintQuality(
 ): BlueprintQualityReport {
   const issues: BlueprintQualityIssue[] = [];
 
+  // Default local quality review is intentionally limited to code-verifiable,
+  // structurally inspectable issues. Subjective semantic quality checks stay
+  // outside the default blocking path unless experimental review is enabled.
   reviewAppStructure(blueprint, issues);
-  reviewImmediateResultSemantics(blueprint, issues);
   reviewPrimaryActionPolicy(blueprint, issues);
   reviewDesktopResponsivePolicy(blueprint, issues);
-  reviewFieldSpecificity(blueprint, issues);
 
   const hasBlocker = issues.some((item) => item.severity === "blocker");
   const hasHigh = issues.some((item) => item.severity === "high");
