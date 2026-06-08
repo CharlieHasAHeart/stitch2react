@@ -5,6 +5,15 @@ function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
 }
 
+function pageSupportableFlowIds(blueprint: ProductBlueprintV1): Set<string> {
+  return new Set<string>([
+    ...blueprint.flows.coreUserFlows.map((flow) => flow.id),
+    ...blueprint.flows.supportingInteractionFlows.map((flow) => flow.id),
+    ...blueprint.flows.feedbackFlows.map((flow) => flow.id),
+    ...blueprint.flows.recoveryFlows.map((flow) => flow.id)
+  ]);
+}
+
 export function repairBlueprint(
   blueprint: ProductBlueprintV1,
   report: ValidationReport
@@ -82,6 +91,19 @@ export function repairBlueprint(
       const fallbackFlowId = repaired.flows.coreUserFlows[0]?.id;
       for (const page of repaired.ui.pages) {
         if (page.supportsFlowIds.length === 0 && fallbackFlowId) {
+          page.supportsFlowIds = [fallbackFlowId];
+        }
+      }
+    }
+
+    if (issue.path.includes("supportsFlowIds") && issue.code === "page_invalid_supported_flow") {
+      const allowedIds = pageSupportableFlowIds(repaired);
+      const fallbackFlowId = repaired.flows.coreUserFlows[0]?.id;
+      for (const page of repaired.ui.pages) {
+        const filtered = page.supportsFlowIds.filter((flowId) => allowedIds.has(flowId));
+        if (filtered.length > 0) {
+          page.supportsFlowIds = Array.from(new Set(filtered));
+        } else if (fallbackFlowId) {
           page.supportsFlowIds = [fallbackFlowId];
         }
       }
