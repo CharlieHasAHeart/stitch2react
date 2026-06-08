@@ -97,6 +97,30 @@ no team collaboration unless explicitly requested
 no external integrations unless explicitly requested
 ```
 
+
+### 2.9 Prefer first-pass generation over LLM self-repair
+
+The default pipeline must optimize for the LLM to generate strong structured artifacts on the first pass.
+
+Do not use LLM self-repair as the default path.
+
+Rationale:
+
+```text
+LLMs are usually strong at generating a coherent artifact once from a clear contract.
+LLMs are often weaker at patching their own complex JSON output without introducing unrelated changes.
+```
+
+Therefore:
+
+```text
+LLM = first-pass typed artifact generation
+Code = validation, normalization, deterministic repair, freeze authority
+```
+
+LLM repair code may remain available for future experiments or manual override, but it should be disabled in the default pipeline until deterministic generation quality has been measured.
+
+
 ---
 
 ## 3. Flow Concepts to Use
@@ -285,7 +309,7 @@ Implementation rules:
 
 ## 6. Recommended Generation Strategy
 
-Use Scheme B: multi-stage LLM generation with explicit upstream JSON artifacts, organized as **phases, gates, and routed repair loops**.
+Use Scheme B: multi-stage LLM generation with explicit upstream JSON artifacts, organized as **phases, gates, deterministic contract checks, deterministic normalization, and deterministic repair**.
 
 Do not rely on implicit conversation history.
 
@@ -296,8 +320,9 @@ Each generation stage receives only the upstream JSON artifacts it needs. Each s
 The pipeline should optimize for the lowest possible rework cost:
 
 ```text
-Generate one dependency layer
-  -> validate and review that layer
+Generate one dependency layer from a strong generation contract
+  -> run deterministic contract validation
+  -> run deterministic normalization / deterministic repair only when safe
   -> continue only when the layer is stable
 ```
 
@@ -314,34 +339,49 @@ Phase 0: Session and input contract
 Phase 1: Product frame
   Stage 1: Input understanding
   Stage 2: Product intent, user model, explicit constraints
-  Gate A: Intent, scope, and explicit-constraint check
+  Contract check A: Intent, scope, and explicit-constraint check
+  Deterministic normalization A
 
 Phase 2: Product behavior model
   Stage 3: Domain modeling
   Stage 4: Flow modeling
-  Gate B: Domain-flow consistency check
-  Optional light semantic review: flow quality only
+  Contract check B: Domain-flow and flow-contract validation
+  Deterministic normalization B
 
 Phase 3: UI contract model
   Stage 5: UI surfaces and page contracts
   Stage 6: Feedback, recovery, and completion-surface mapping
-  Gate C: Flow-UI coverage check
-  Optional light semantic review: UI contract quality only
+  Contract check C: Flow-UI coverage and UI-contract validation
+  Deterministic normalization C
 
 Phase 4: Blueprint assembly
   Stage 7: Visual policy, generation policy, uncertainty
   Stage 8: Blueprint assembly
-  Gate D: Full deterministic validation
+  Contract check D: Full deterministic validation
 
-Phase 5: Quality and targeted repair
-  Stage 9: Semantic quality review
-  Stage 10: Repair routing
-  Stage 11A: Blueprint repair for schema or deterministic semantic defects
-  Stage 11B: Quality repair for targeted quality defects
-  Gate E: Re-validation and affected-area re-review
+Phase 5: Deterministic convergence
+  Stage 9: Deterministic normalization
+  Stage 10: Deterministic repair for code-verifiable defects only
+  Gate E: Re-validation
 
 Phase 6: Freeze
-  Stage 12: Freeze blueprint
+  Stage 11: Freeze blueprint
+```
+
+Default pipeline rule:
+
+```text
+No default LLM repair.
+No LLM quality_repair loop.
+No LLM semantic self-review as a freeze blocker.
+```
+
+If a defect cannot be detected or repaired deterministically, prefer one of:
+
+```text
+1. fail with actionable diagnostics;
+2. regenerate the affected stage under a stricter generation contract;
+3. keep LLM repair disabled unless a manual/experimental mode explicitly enables it.
 ```
 
 ### 6.2 Why phases and gates are required
@@ -460,9 +500,105 @@ Full semantic quality review is required before freeze.
 
 Semantic quality review must report structured issues. It must not directly rewrite the blueprint.
 
-### 6.6 Repair architecture
+### 6.6 Stage generation contracts
 
-Repair is a router, not one broad rewrite stage.
+Each LLM generation stage must receive a strong generation contract.
+
+A generation contract defines what the model must include on the first pass, what it must not include, which defaults are allowed, and which expansions are forbidden.
+
+```ts
+type StageGenerationContract = {
+  stage: PipelineStage;
+  mustInclude: string[];
+  mustNotInclude: string[];
+  requiredInvariants: string[];
+  allowedDefaults: string[];
+  forbiddenExpansions: string[];
+  outputCompletenessChecklist: string[];
+};
+```
+
+Example FlowModel contract:
+
+```text
+mustInclude:
+- at least one core user flow
+- each core flow has trigger
+- each core flow has user/system steps
+- each core flow has validation or system-effect step
+- each core flow has feedback
+- each core flow has recovery
+- each core flow has completion signal
+- each core flow names intended UI surfaces
+
+mustNotInclude:
+- login unless explicit
+- payment unless explicit
+- admin/backoffice role unless explicit
+- external integration unless explicit
+```
+
+Example UIModel contract:
+
+```text
+mustInclude:
+- every core flow has at least one supporting page
+- every input page has a primary action
+- every result/confirmation page has a completion signal
+- every recovery path has visible UI handling
+- page role is explicit through page fields and actions, not inferred from business nouns
+
+mustNotInclude:
+- UI-as-image
+- orphan pages
+- unsupported flow ids
+- primary actions without target or feedback
+```
+
+Generation contracts are the primary way to improve semantic quality. Post-generation LLM repair is not the default way to improve semantic quality.
+
+### 6.7 Deterministic checks, normalization, and repair
+
+Review/checking should primarily cover code-verifiable issues:
+
+```text
+schema validity
+reference validity
+policy invariants
+flow completeness
+UI contract completeness
+artifact contract completeness
+```
+
+Examples:
+
+```text
+supportsFlowIds points to an unsupported flow id
+UIAction.triggersFlowId points to an unsupported triggerable flow id
+targetPageId points to a missing page
+CoreUserFlow has no completionSignal
+CoreUserFlow has fewer than two meaningful steps
+non-readonly input page has no primary action
+unresolved question has no defaultDecision
+visualPolicy.imageUsage.forbidUiAsImage is not true
+generationPolicy.noFollowUpQuestions is not true
+```
+
+Deterministic repair may fix only defects where the correct repair is clear from code:
+
+```text
+missing defaultDecision -> insert safe default
+wizard shell without wizard evidence -> convert to single_page or form_to_result
+desktop policy missing -> set required desktop breakpoints
+invalid flow id with a unique safe match -> replace with the unique match
+missing result secondary action -> add safe start-over/edit action
+```
+
+If the correct fix is not deterministic, do not invoke LLM repair by default. Fail with diagnostics or regenerate the affected stage using a stricter contract.
+
+### 6.8 Optional repair architecture
+
+Repair remains a router, but in the default pipeline it routes only deterministic, code-verifiable defects. LLM repair routes are retained for non-default experimental or manual override modes.
 
 ```ts
 type RepairRoute =
@@ -477,9 +613,9 @@ type RepairRoute =
 
 Use deterministic code repair first for schema, reference, structural, policy, and enumerable issues.
 
-Use LLM-assisted repair only for targeted semantic, wording, or local consistency issues that are difficult to repair deterministically.
+Do not use LLM-assisted repair in the default pipeline. If it is enabled in an experimental/manual mode, constrain it to targeted semantic, wording, or local consistency issues that cannot be repaired deterministically.
 
-Use quality repair only after schema and deterministic semantic validation pass and quality review finds targeted-repairable quality defects.
+Keep quality repair available only as an optional experimental/manual mode after schema and deterministic semantic validation pass. It is not part of the default pipeline.
 
 Do not allow one broad repair step to rewrite the whole blueprint when a local repair is sufficient.
 
@@ -741,36 +877,29 @@ Rules:
 8. Assembly must preserve IDs and references.
 9. Full deterministic validation must pass before full semantic quality review runs.
 
-### 7.6 Phase 5: Quality and Targeted Repair
+### 7.6 Phase 5: Deterministic Convergence
 
 Stages:
 
 ```text
-Stage 9: Semantic quality review
-Stage 10: Repair routing
-Stage 11A: Blueprint repair
-Stage 11B: Quality repair
-Gate E: Re-validation and affected-area re-review
+Stage 9: Deterministic contract checks
+Stage 10: Deterministic normalization
+Stage 11: Deterministic repair for code-verifiable defects only
+Gate E: Re-validation
 ```
 
-Full semantic quality review runs only after deterministic validation passes.
+Full deterministic validation runs after blueprint assembly.
 
-It is an LLM-assisted review stage, but it is not the final validity gate.
-Programmatic validation remains the authority for schema validity and deterministic semantic validity.
+In the default pipeline, this phase does not run LLM semantic self-review or LLM quality repair.
 
 Input:
 
 ```ts
 {
   sessionId: string;
-  validatedBlueprint: ProductBlueprintV1;
+  assembledBlueprint: ProductBlueprintV1;
   validationReport: ValidationReport;
-  reviewRules: {
-    doNotChangeExplicitFacts: true;
-    doNotExpandScope: true;
-    reportIssuesOnly: true;
-    focusOnSemanticConsistency: true;
-  };
+  contractChecks: DeterministicContractCheck[];
 }
 ```
 
@@ -778,331 +907,45 @@ Output:
 
 ```ts
 {
-  qualityReview: BlueprintQualityReport;
-  repairPlan?: RepairPlan;
+  normalizedBlueprint?: ProductBlueprintV1;
   repairedBlueprint?: ProductBlueprintV1;
+  validationReport: ValidationReport;
+  normalizationReport?: DeterministicNormalizationReport;
+  repairReport?: DeterministicRepairReport;
 }
 ```
 
-Semantic quality review should find blueprint issues that are structurally valid but semantically weak, misleading, vague, or inconsistent enough to degrade downstream Stitch or React generation.
+The purpose of this phase is to converge the blueprint through code-verifiable checks only.
 
-Review scope examples:
+Default check scope:
 
-1. user-explicit result intent is weakened into generic submission confirmation;
-2. a flow is formally valid but does not read like a real user task;
-3. page purpose, supported flow IDs, and actions are only loosely aligned;
-4. completion signals are technically present but too weak to guide downstream generation;
-5. assumptions or default decisions are legal but misleadingly broad.
+1. schema validity;
+2. id and reference validity;
+3. flow completeness;
+4. UI contract completeness;
+5. policy invariants;
+6. default-decision presence;
+7. page/action target validity;
+8. no explicit-constraint violation;
+9. no UI-as-image policy violation.
+
+Default repair scope:
+
+1. fill deterministic safe defaults;
+2. normalize app structure when evidence contradicts the selected shell;
+3. normalize responsive policy;
+4. repair uniquely resolvable id/reference issues;
+5. add missing safe secondary actions for terminal/result pages;
+6. add safe default decisions for unresolved questions.
 
 Rules:
 
-1. The review stage must return structured issues, not a repaired blueprint.
-2. The review stage must not decide final validity on its own.
-3. The review stage must not change explicit user facts.
-4. The review stage must not expand product scope.
-5. The review stage must classify issues by severity, repairability, affected paths, rationale, and suggested fix.
-6. The review stage must be used to inform repair routing, not to replace deterministic validation.
-7. Quality blockers must be classified as `targeted_repairable` or `non_repairable`.
-8. Targeted-repairable blockers should enter `quality_repair` before session failure.
-9. Repair attempts must be bounded.
-
-#### 7.6.1 Blueprint repair
-
-Use blueprint repair for schema or deterministic semantic defects.
-
-Input:
-
-```ts
-{
-  sessionId: string;
-  invalidBlueprint: ProductBlueprintV1;
-  validationErrors: ValidationIssue[];
-  repairRules: {
-    doNotChangeExplicitFacts: true;
-    doNotExpandScope: true;
-    fixOnlyInvalidOrInconsistentFields: true;
-    returnFullCorrectedBlueprint: true;
-  };
-}
-```
-
-Output:
-
-```ts
-{
-  blueprint: ProductBlueprintV1;
-}
-```
-
-#### 7.6.2 Quality repair
-
-Use quality repair for targeted quality review defects after schema and deterministic semantic validation have already passed.
-
-Input:
-
-```ts
-{
-  sessionId: string;
-  blueprintId: string;
-  validatedBlueprint: ProductBlueprintV1;
-  qualityReviewReport: BlueprintQualityReport;
-  targetedIssues: BlueprintQualityIssue[];
-  repairRules: {
-    doNotChangeExplicitFacts: true;
-    doNotExpandScope: true;
-    fixOnlyTargetedQualityIssues: true;
-    returnFullCorrectedBlueprint: true;
-  };
-}
-```
-
-Output:
-
-```ts
-{
-  candidate: QualityRepairCandidate;
-}
-```
-
-Quality repair may return a full `ProductBlueprintV1` for persistence compatibility, but that returned blueprint is a **candidate**, not the active repaired blueprint.
-
-The candidate must pass deterministic post-LLM repair guard before it can be persisted as the guarded repaired blueprint and used by validation or downstream stages.
-
-#### 7.6.3 Post-LLM repair guard
-
-LLM-assisted quality repair output must not be trusted directly.
-
-The required quality repair flow is:
-
-```text
-quality review report
-  -> repair routing
-  -> repair plan
-  -> deterministic local quality repair
-  -> optional LLM quality repair candidate
-  -> post-LLM repair guard
-  -> persist guarded blueprint version
-  -> schema validation
-  -> deterministic semantic validation
-  -> quality review rerun
-  -> quality_revalidation gate
-  -> freeze only if eligible
-```
-
-Rules:
-
-1. The LLM quality repair output is a candidate, not the active blueprint.
-2. The pipeline must not assign the candidate directly to `activeBlueprint`.
-3. A deterministic guard must compare the pre-repair blueprint, local deterministic repair output, LLM candidate, repair plan, protected paths, and allowed mutation paths.
-4. The guard must reject or overwrite changes that revert deterministic local repair output.
-5. The guard must reject changes outside the allowed repair scope.
-6. The guard must protect explicit-source facts, ids, flow references, page references, and raw input.
-7. The guard must re-apply deterministic quality invariants when needed.
-8. The guard must produce and persist a `RepairGuardReport` whenever it modifies or rejects candidate changes.
-
-Protected paths include, at minimum:
-
-```text
-ui.appStructure.shell
-ui.responsivePolicy.mobileFirst
-ui.responsivePolicy.breakpoints
-generationPolicy.stitchGenerationRules.requirePrimaryActionInEveryPage
-input.raw
-all explicit-source fields
-all ids
-all flow references
-all page references
-```
-
-Recommended implementation shape:
-
-```ts
-const locallyRepaired = repairBlueprintQuality(activeBlueprint, qualityReviewReport);
-const candidate = await runQualityRepairStage(locallyRepaired, repairPlan);
-const { guardedBlueprint, guardReport } = enforceQualityRepairInvariants({
-  beforeRepair: activeBlueprint,
-  locallyRepaired,
-  candidate,
-  qualityReviewReport,
-  repairPlan
-});
-persistRepairGuardReport(guardReport);
-activeBlueprint = guardedBlueprint;
-```
-
-Incorrect implementation:
-
-```ts
-activeBlueprint = qualityRepairStage.output;
-```
-
-#### 7.6.4 Layer repair must feed forward
-
-Layer-level quality repair must not repair a temporary blueprint snapshot and then allow downstream stages to continue using the original defective layer artifact.
-
-A layer-level repair must choose one of these valid strategies:
-
-```text
-1. Produce, persist, version, and feed forward the repaired layer artifact.
-2. Block and regenerate the affected layer.
-3. Treat the review as advisory only and keep the gate blocked until the real layer artifact is fixed.
-```
-
-A repaired blueprint snapshot from a layer review is not sufficient unless the affected layer artifact is extracted, persisted, versioned, and used as the new downstream input.
-
-Required flow for layer repair:
-
-```text
-layer quality review
-  -> repair routing
-  -> deterministic/LLM repair candidate
-  -> post-repair guard
-  -> extract repaired layer artifact
-  -> persist new layer artifact version
-  -> rerun layer quality review
-  -> rerun layer gate
-  -> downstream stages consume repaired layer artifact
-```
-
-Examples:
-
-```text
-If flow_quality_review repairs FlowModel, downstream UI modeling must consume the repaired FlowModel.
-If ui_contract_review repairs UIModel, policy generation and blueprint assembly must consume the repaired UIModel.
-```
-
-Do not clear a layer gate while downstream stages still consume the original defective artifact.
-
-#### 7.6.5 Quality reports are immutable
-
-Quality reports are immutable evidence.
-
-Do not mutate, overwrite, or synthetically clear quality report issues after repair.
-
-Incorrect:
-
-```ts
-activeReport = {
-  ...activeReport,
-  passed: true,
-  issues: []
-};
-```
-
-Correct:
-
-```text
-1. Keep the original quality report unchanged.
-2. Persist the repair plan and repair candidate.
-3. Persist the guarded repaired artifact.
-4. Rerun the relevant quality review.
-5. Use the new quality review report to decide whether the gate passes.
-```
-
-Only a new quality review report may clear previous issues.
-
-#### 7.6.6 Page role classification for quality repair
-
-Do not classify a page as a result page from business nouns.
-
-Business nouns such as the following describe domain content, not page role:
-
-```text
-quote
-booking
-order
-request
-invoice
-report
-assessment
-application
-case
-record
-```
-
-Result-like page evidence includes:
-
-```text
-readonly = true
-confirmationOnly = true
-id/name/route contains result, success, confirmation, complete, or completed
-purpose explicitly says show/display result, confirmation, completed output, or final generated answer
-page has completionSignals and no input-submit primary action
-```
-
-Input/action page evidence includes:
-
-```text
-purpose says collect, enter, edit, request, create, submit, or configure input
-page has form/input/create/request/submit sections
-page has a primary submit/save/create action
-readonly = false
-confirmationOnly = false
-```
-
-When preserving explicit outcome semantics, repair input pages and result pages differently.
-
-Input page purpose:
-
-```text
-Collect the user's required input and submit it to generate the visible result.
-```
-
-Result page purpose:
-
-```text
-Show the immediate estimated result after submission.
-```
-
-A page id such as `quote_request_form_page` must not be treated as a result page merely because it contains `quote`.
-
-#### 7.6.7 Repair routing rules
-
-Repair must be routed by issue type.
-
-Use deterministic code repair for issues such as:
-
-1. missing or empty required fields such as trigger, completionSignal, recoveryActions, or defaultDecision;
-2. invalid or missing references such as unknown flow IDs, invalid action targets, or missing UI surface references;
-3. structural constraints such as too few steps in a flow, a page with no supported flow, or a non-readonly page with no primary action;
-4. policy enforcement such as noFollowUpQuestions, forbidUiAsImage, and strong primary-action policy requirements;
-5. locally templateable quality fixes such as adding a useful secondary action to a result page or restoring required desktop breakpoints.
-
-Use LLM-assisted repair only for issues such as:
-
-1. preserving explicit user outcome semantics when wording became weak or ambiguous;
-2. strengthening completion signals, feedback copy, page purpose text, or default decisions without changing product scope;
-3. aligning domain, flow, UI, and uncertainty language when they are structurally legal but semantically inconsistent;
-4. local field-specificity improvements that need judgment but do not require broad restructuring.
-
-LLM-assisted repair must be bounded.
-
-It must not:
-
-1. modify raw input;
-2. change any user-explicit fact into inferred or defaulted content;
-3. add payments, authentication, team collaboration, complex permissions, or integrations unless explicitly requested;
-4. add major new pages, major new flows, or major new entities just to make the blueprint feel more complete;
-5. remove valid supporting, feedback, or recovery flows merely to simplify references;
-6. reinterpret the product as a different product category;
-7. replace the whole blueprint when a local repair is sufficient.
-
-Recommended repair execution order:
-
-```text
-1. run deterministic validation
-2. if validation fails -> code repair first, then bounded blueprint_repair if needed
-3. if deterministic validation passes -> run semantic quality review
-4. classify quality issues as no-op, warning, targeted_repairable, or non_repairable
-5. if targeted quality issues exist -> run deterministic local quality repair
-6. if needed, run LLM-assisted quality repair and treat its output as a candidate
-7. run post-LLM repair guard and persist a RepairGuardReport
-8. persist the guarded repaired blueprint as a new version
-9. rerun schema validation
-10. rerun deterministic semantic validation
-11. rerun quality review or affected-area semantic review
-12. freeze only when required gates pass
-```
+1. Do not use LLM repair by default.
+2. Do not ask the LLM to patch its own full blueprint in the default pipeline.
+3. Do not use semantic quality wording as a freeze blocker unless it can be expressed as a deterministic contract check.
+4. If a defect cannot be deterministically repaired, fail with diagnostics or regenerate the affected stage using a stricter generation contract.
+5. Existing LLM repair code may remain in the repository but must be disabled in the default pipeline.
+6. Freeze only after deterministic checks pass.
 
 ### 7.7 Phase 6: Freeze
 
@@ -1929,6 +1772,77 @@ Do not let downstream generation read raw input as its primary source after blue
 
 ---
 
+## Amendment: Default Pipeline Disables LLM Repair
+
+### Why this amendment exists
+
+Operational experience shows that LLMs can produce good first-pass structured artifacts when the prompt, schema, and generation contract are strong.
+
+However, asking the LLM to modify its own previously generated complex JSON often causes regressions:
+
+```text
+local deterministic repairs get reverted
+ids and references change unexpectedly
+page roles drift
+policy invariants are weakened
+small wording fixes cause unrelated structural changes
+```
+
+The default pipeline should therefore spend more effort on controlling first-pass generation quality and less effort on post-generation LLM repair.
+
+### Default behavior
+
+```text
+LLM repair default = disabled
+LLM semantic quality repair loop = disabled
+LLM self-review as freeze blocker = disabled
+```
+
+LLM repair code may remain in the codebase for later experiments, debug tooling, or explicit manual override.
+
+### Preferred convergence strategy
+
+```text
+strong generation contract
+  -> first-pass LLM artifact generation
+  -> deterministic contract validation
+  -> deterministic normalization
+  -> deterministic repair for code-verifiable defects
+  -> re-validation
+  -> freeze or fail with diagnostics
+```
+
+### When to regenerate instead of repair
+
+If a stage output has broad semantic weakness that cannot be checked or fixed deterministically, prefer regenerating that stage with a stricter generation contract over asking the LLM to patch the already-generated artifact.
+
+Examples:
+
+```text
+Flow model is too generic
+UI model is broadly disconnected from flow model
+Product intent was misunderstood
+Page contracts do not reflect user task structure
+```
+
+### When optional LLM repair may be considered later
+
+Optional LLM repair may be reintroduced only after the no-LLM-repair baseline is measured.
+
+It should require explicit opt-in and must remain bounded by:
+
+```text
+candidate output only
+post-repair guard
+allowed mutation paths
+protected paths
+deterministic validation
+quality/static checks
+artifact versioning
+```
+
+---
+
 ## 17. Final Architectural Summary
 
 The system should be implemented as:
@@ -1944,8 +1858,8 @@ One user input
   -> stage 5 policy/uncertainty
   -> stage 6 assemble blueprint
   -> schema validation
-  -> semantic validation
-  -> bounded repair if needed
+  -> deterministic semantic validation
+  -> deterministic normalization / deterministic repair if needed
   -> freeze blueprintId
   -> downstream generation consumes frozen blueprint only
 ```

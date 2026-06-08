@@ -127,13 +127,113 @@ For Stitch-facing outputs, preserve this rule:
 - Images may be used only as subtle decorative backgrounds, ambient accents, thumbnails, avatars, or content images.
 - Navigation, forms, tables, cards, buttons, charts, and important text must not be embedded inside raster images.
 
+## Default Pipeline: No LLM Repair
+
+Codex must optimize the default pipeline for high-quality first-pass LLM generation.
+
+Do not use LLM repair in the default pipeline.
+
+Allowed default pattern:
+
+```text
+strong stage generation contract
+  -> first-pass LLM generation
+  -> deterministic validation
+  -> deterministic normalization
+  -> deterministic repair for code-verifiable defects
+  -> re-validation
+  -> freeze or fail with diagnostics
+```
+
+Disallowed default pattern:
+
+```text
+generate blueprint
+  -> ask LLM to review semantic quality
+  -> ask LLM to repair its own full blueprint
+  -> accept repaired blueprint
+```
+
+LLM repair code may remain in the repository, but it must be treated as disabled by default, experimental, or manual override only.
+
+### What LLM should do
+
+LLM stages should generate typed artifacts once from explicit inputs:
+
+```text
+input_understanding
+product_frame
+domain_modeling
+flow_modeling
+ui_modeling
+policy_uncertainty
+blueprint_assembly
+```
+
+Each stage must receive a strong generation contract with:
+
+```text
+mustInclude
+mustNotInclude
+requiredInvariants
+allowedDefaults
+forbiddenExpansions
+outputCompletenessChecklist
+```
+
+### What code should do
+
+Code must be the authority for:
+
+```text
+schema validation
+reference validation
+policy invariants
+flow completeness checks
+UI contract completeness checks
+deterministic normalization
+deterministic repair
+freeze eligibility
+```
+
+### Deterministic repair only by default
+
+Default repair may fix only code-verifiable defects, such as:
+
+```text
+invalid flow id
+invalid page id
+missing completionSignal
+missing defaultDecision
+missing primary action on input page
+wizard shell without wizard evidence
+mobile-first policy when desktop-first is required
+breakpoints missing required desktop targets
+forbidUiAsImage not true
+noFollowUpQuestions not true
+```
+
+Do not route vague semantic preferences, wording quality, or "could be clearer" issues into LLM repair by default.
+
+### Regenerate instead of LLM patching
+
+If an artifact is broadly semantically weak and code cannot determine the correct repair, prefer:
+
+```text
+1. fail with diagnostics; or
+2. regenerate the affected stage with a stricter generation contract.
+```
+
+Do not ask the LLM to patch its own complex full blueprint in the default pipeline.
+
+
 ## Generation Pipeline
 
 Implement the pipeline as explicit JSON artifact passing.
 
 Do not rely on implicit model conversation state.
 
-The required organization is **phase + gate + repair routing**, not a single linear generate-everything chain.
+The required organization is **phase + gate + deterministic contract validation + deterministic normalization/repair**, not a single linear generate-everything chain and not an LLM self-repair loop.
 
 ```text
 Phase 0: Session and input contract
@@ -184,16 +284,16 @@ Phase 4: Blueprint assembly
     - ValidationReport
   Gate: full_deterministic_validation
 
-Phase 5: Quality and targeted repair
+Phase 5: Deterministic convergence
   Stages:
-    - semantic_quality_review
-    - repair_routing
-    - blueprint_repair, when schema or deterministic semantic validation fails
-    - quality_repair, when quality review finds targeted-repairable issues
+    - deterministic contract checks
+    - deterministic normalization
+    - deterministic repair for code-verifiable defects only
   Output:
-    - BlueprintQualityReport
-    - RepairPlan, when needed
-    - repaired ProductBlueprintV1, when needed
+    - ValidationReport
+    - DeterministicNormalizationReport, when needed
+    - DeterministicRepairReport, when needed
+    - repaired ProductBlueprintV1, when deterministic repair is safe
   Gate: quality_revalidation
 
 Phase 6: Freeze
@@ -259,14 +359,14 @@ manual_blocking_issue
 
 `blueprint_repair` is for schema or deterministic semantic defects.
 
-`quality_repair` is for targeted quality defects after schema and deterministic semantic validation have already passed.
+`quality_repair` is retained only for experimental or manual override modes. It is not part of the default pipeline.
 
-Do not use broad full-blueprint regeneration when a local targeted repair is sufficient.
+Do not use LLM self-repair by default. Use deterministic repair when the fix is code-verifiable; otherwise fail with diagnostics or regenerate the affected stage with a stricter generation contract.
 
 
 ## Quality Repair Safety Rules
 
-Codex must treat LLM-assisted repair output as untrusted until deterministic guards pass.
+If experimental/manual LLM repair is enabled, Codex must treat LLM-assisted repair output as untrusted until deterministic guards pass. This section does not enable LLM repair in the default pipeline.
 
 ### 1. Never assign LLM quality repair output directly
 
@@ -1101,9 +1201,9 @@ At minimum, add tests for:
 - visual policy forbids UI-as-image
 - repair fixes missing completion signal
 - repair does not change explicit constraints
-- quality repair does not directly trust LLM full-blueprint output
-- post-repair guard prevents LLM from reverting deterministic appStructure and responsivePolicy repairs
-- layer repair feeds repaired artifacts into downstream stages
+- default pipeline does not invoke LLM quality_repair
+- deterministic repair preserves appStructure and responsivePolicy invariants
+- deterministic layer normalization/repair feeds repaired artifacts into downstream stages
 - quality reports are immutable and are not synthetically cleared
 - page role classification does not treat business nouns such as quote as result-page evidence
 - explicit outcome repair keeps input page and result page purposes distinct

@@ -1534,9 +1534,84 @@ export type BlueprintQualityReport = {
 };
 ```
 
-Quality review must not directly modify the blueprint. It reports issues for repair routing.
+Quality review must not directly modify the blueprint. In the default pipeline, review/checking should be deterministic and should report code-verifiable issues for deterministic normalization, deterministic repair, stage regeneration, or manual failure.
 
-### 33.6 Repair routing and repair plans
+### 33.6 First-pass generation and deterministic checking policy
+
+The default pipeline optimizes for high-quality first-pass LLM generation, not LLM self-repair.
+
+```ts
+export type LlmRepairMode =
+  | "disabled_default"
+  | "experimental"
+  | "manual_override";
+
+export type DeterministicCheckCategory =
+  | "schema"
+  | "reference"
+  | "policy_invariant"
+  | "flow_contract"
+  | "ui_contract"
+  | "artifact_contract";
+
+export type DeterministicContractCheck = {
+  category: DeterministicCheckCategory;
+  code: string;
+  path: string;
+  message: string;
+  severity: "error" | "warning";
+  repairability:
+    | "deterministic_repairable"
+    | "regenerate_stage"
+    | "manual_blocking_issue";
+  suggestedFix?: string;
+};
+
+export type StageGenerationContract = {
+  stage: PipelineStage;
+  mustInclude: string[];
+  mustNotInclude: string[];
+  requiredInvariants: string[];
+  allowedDefaults: string[];
+  forbiddenExpansions: string[];
+  outputCompletenessChecklist: string[];
+};
+
+export type DeterministicNormalizationReport = {
+  id: string;
+  sessionId: string;
+  artifactId: string;
+  normalizedPaths: string[];
+  appliedRules: string[];
+  createdAt: string;
+};
+
+export type DeterministicRepairReport = {
+  id: string;
+  sessionId: string;
+  artifactId: string;
+  sourceCheckCodes: string[];
+  repairedPaths: string[];
+  appliedRules: string[];
+  createdAt: string;
+};
+```
+
+Default behavior:
+
+```text
+LLM repair mode = disabled_default
+
+LLM stages generate typed artifacts once.
+Code validates deterministic contracts.
+Code normalizes deterministic formatting/default issues.
+Code repairs only deterministic, code-verifiable defects.
+If a semantic issue cannot be deterministically checked or repaired, the pipeline should fail with diagnostics or regenerate the affected stage under a stricter prompt/contract.
+```
+
+`quality_repair`, `QualityRepairCandidate`, and `RepairGuardReport` may remain in the codebase for experiments or manual override, but they are not part of the default pipeline.
+
+### 33.7 Repair routing and repair plans
 
 ```ts
 export type RepairRoute =
@@ -1606,9 +1681,9 @@ export type RepairAttempt = {
 
 `blueprint_repair` is for schema or deterministic semantic defects.
 
-`quality_repair` is for targeted quality defects after schema and deterministic semantic validation pass.
+`quality_repair` is retained for experimental or manual-override targeted quality repair after schema and deterministic semantic validation pass. It is not used in the default pipeline.
 
-### 33.7 Quality repair input and output
+### 33.8 Optional LLM quality repair input and output
 
 ```ts
 export type QualityRepairInput = {
@@ -1644,7 +1719,7 @@ export type QualityRepairOutput = {
 
 Quality repair may return a full corrected blueprint for persistence compatibility, but the returned blueprint is only a **repair candidate** until deterministic guard and validation pass.
 
-### 33.8 Post-repair guard
+### 33.9 Optional post-repair guard
 
 ```ts
 export type RepairGuardChangeReason =
@@ -1680,7 +1755,7 @@ export type RepairGuardReport = {
 
 The post-repair guard protects deterministic local repair output from being reverted by later LLM repair candidates. It must run before a quality repair candidate becomes the active repaired blueprint.
 
-### 33.9 Page role classification
+### 33.10 Page role classification
 
 ```ts
 export type PageRole =

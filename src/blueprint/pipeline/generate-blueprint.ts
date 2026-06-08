@@ -44,6 +44,8 @@ export type GenerateBlueprintOptions = {
   model?: string;
   maxRepairAttempts?: number;
   maxQualityRepairAttempts?: number;
+  enableExperimentalLlmReview?: boolean;
+  enableExperimentalLlmRepair?: boolean;
   repository?: BlueprintRepository;
   stageClient?: BlueprintStageClient;
   onStageEvent?: (event: StageEvent) => void;
@@ -57,6 +59,14 @@ export type GenerateBlueprintResult = {
   validationReportId: string;
   repository: BlueprintRepository;
 };
+
+function useExperimentalLlmReview(options: GenerateBlueprintOptions): boolean {
+  return options.enableExperimentalLlmReview === true;
+}
+
+function useExperimentalLlmRepair(options: GenerateBlueprintOptions): boolean {
+  return options.enableExperimentalLlmRepair === true;
+}
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -495,6 +505,9 @@ function checkFlowUiCoverage(
 ): GateReport {
   const issues: GateIssue[] = [];
   const pageFlowIds = new Set(blueprint.ui.pages.flatMap((page) => page.supportsFlowIds));
+  const pageCount = blueprint.ui.pages.length;
+  const shell = blueprint.ui.appStructure.shell;
+  const navigationType = blueprint.ui.navigation.type;
   for (const flow of blueprint.flows.coreUserFlows) {
     if (flow.uiSurfaceIds.length === 0) {
       issues.push(makeIssue("core_flow_missing_ui_surface", `flows.coreUserFlows.${flow.id}.uiSurfaceIds`, "Core flow must expose at least one UI surface before assembly."));
@@ -508,6 +521,27 @@ function checkFlowUiCoverage(
       issues.push(makeIssue("page_missing_supported_flow", `ui.pages.${page.id}.supportsFlowIds`, "Every page must support at least one flow before assembly."));
     }
   }
+
+  if (shell === "wizard" && (navigationType === "minimal" || pageCount <= 2)) {
+    issues.push(
+      makeIssue(
+        "app_structure_mismatch",
+        "ui.appStructure.shell",
+        "Wizard appStructure requires real wizard evidence. Use a non-wizard shell such as form_to_result when the UI is only a linear form/result structure."
+      )
+    );
+  }
+
+  if (pageCount === 2 && shell === "single_page") {
+    issues.push(
+      makeIssue(
+        "app_structure_too_generic",
+        "ui.appStructure.shell",
+        "A two-page form/result structure should use an explicit non-wizard shell such as form_to_result instead of a generic single_page shell."
+      )
+    );
+  }
+
   return createGateReport(
     "flow_ui_coverage",
     { layer: "ui", kind: "structural", sourceStage: "ui_modeling" },
@@ -1000,6 +1034,8 @@ export async function generateBlueprintFromInput(
   const model = options.model ?? process.env.OPENAI_MODEL ?? "gpt-5.4";
   const maxRepairAttempts = options.maxRepairAttempts ?? 2;
   const maxQualityRepairAttempts = options.maxQualityRepairAttempts ?? 2;
+  const experimentalLlmReview = useExperimentalLlmReview(options);
+  const experimentalLlmRepair = useExperimentalLlmRepair(options);
   const session = repository.createSession();
   const sessionId = session.id;
   const onStageEvent = options.onStageEvent;
@@ -1162,92 +1198,99 @@ export async function generateBlueprintFromInput(
   let flowArtifactId = initialFlowStage.artifactId;
   let flowOutput = initialFlowStage.output;
 
-  const flowBlueprintSnapshot = assembleBlueprint({
-    meta: metaForInput(rawInput),
-    understanding: productFrameStage.output.input,
-    product: productFrameStage.output.product,
-    users: productFrameStage.output.users,
-    domain: domainStage.output,
-    flows: flowOutput,
-    ui: {
-      appStructure: { shell: "single_page", pageOrder: [] },
-      navigation: { type: "minimal", globalNavItems: [] },
-      pages: [],
-      globalComponents: [],
-      responsivePolicy: { mobileFirst: false, breakpoints: [] }
-    },
-    visualPolicy: defaultVisualPolicy,
-    generationPolicy: defaultGenerationPolicy,
-    uncertainty: { assumptions: [], unresolvedQuestions: [], notableRisks: [] }
-  });
-  let flowQualityReport = await runLayerQualityReview(
-    repository,
-    stageClient,
-    model,
-    sessionId,
-    "flow_quality_review",
-    "flow_layer",
-    flowArtifactId,
-    {
-      input: productFrameStage.output.input,
+  if (experimentalLlmReview) {
+    const flowBlueprintSnapshot = assembleBlueprint({
+      meta: metaForInput(rawInput),
+      understanding: productFrameStage.output.input,
       product: productFrameStage.output.product,
       users: productFrameStage.output.users,
       domain: domainStage.output,
-      flows: flowOutput
-    },
-    onStageEvent
-  );
-  persistQualityReview(repository, flowQualityReport, sessionId);
-  const flowLayerInitialGate = createLayerQualityGate(
-    "domain_flow_consistency",
-    { layer: "flow", kind: "light_review", sourceStage: "flow_quality_review" },
-    sessionId,
-    [flowArtifactId],
-    flowQualityReport
-  );
-  persistGateReport(repository, flowLayerInitialGate, sessionId);
-  const resolvedFlowReview = await resolveLayerQualityBlockers(
-    repository,
-    stageClient,
-    model,
-    sessionId,
-    "flow_layer",
-    flowArtifactId,
-    flowBlueprintSnapshot,
-    flowQualityReport,
-    flowLayerInitialGate,
-    maxQualityRepairAttempts,
-    {
-      reviewStage: "flow_quality_review",
-      layerArtifactType: "flow_model",
-      layerSchema: flowModelSchema,
-      layerSchemaName: "FlowModel",
-      extractLayerOutput: (resolvedBlueprint) => resolvedBlueprint.flows,
-      applyLayerOutput: (resolvedBlueprint, resolvedFlows) => ({
-        ...resolvedBlueprint,
-        flows: resolvedFlows
-      }),
-      createReviewPayload: (resolvedFlows) => ({
+      flows: flowOutput,
+      ui: {
+        appStructure: { shell: "single_page", pageOrder: [] },
+        navigation: { type: "minimal", globalNavItems: [] },
+        pages: [],
+        globalComponents: [],
+        responsivePolicy: { mobileFirst: false, breakpoints: [] }
+      },
+      visualPolicy: defaultVisualPolicy,
+      generationPolicy: defaultGenerationPolicy,
+      uncertainty: { assumptions: [], unresolvedQuestions: [], notableRisks: [] }
+    });
+    let flowQualityReport = await runLayerQualityReview(
+      repository,
+      stageClient,
+      model,
+      sessionId,
+      "flow_quality_review",
+      "flow_layer",
+      flowArtifactId,
+      {
         input: productFrameStage.output.input,
         product: productFrameStage.output.product,
         users: productFrameStage.output.users,
         domain: domainStage.output,
-        flows: resolvedFlows
-      }),
+        flows: flowOutput
+      },
       onStageEvent
+    );
+    persistQualityReview(repository, flowQualityReport, sessionId);
+    const flowLayerInitialGate = createLayerQualityGate(
+      "domain_flow_consistency",
+      { layer: "flow", kind: "light_review", sourceStage: "flow_quality_review" },
+      sessionId,
+      [flowArtifactId],
+      flowQualityReport
+    );
+    persistGateReport(repository, flowLayerInitialGate, sessionId);
+
+    if (experimentalLlmRepair) {
+      const resolvedFlowReview = await resolveLayerQualityBlockers(
+        repository,
+        stageClient,
+        model,
+        sessionId,
+        "flow_layer",
+        flowArtifactId,
+        flowBlueprintSnapshot,
+        flowQualityReport,
+        flowLayerInitialGate,
+        maxQualityRepairAttempts,
+        {
+          reviewStage: "flow_quality_review",
+          layerArtifactType: "flow_model",
+          layerSchema: flowModelSchema,
+          layerSchemaName: "FlowModel",
+          extractLayerOutput: (resolvedBlueprint) => resolvedBlueprint.flows,
+          applyLayerOutput: (resolvedBlueprint, resolvedFlows) => ({
+            ...resolvedBlueprint,
+            flows: resolvedFlows
+          }),
+          createReviewPayload: (resolvedFlows) => ({
+            input: productFrameStage.output.input,
+            product: productFrameStage.output.product,
+            users: productFrameStage.output.users,
+            domain: domainStage.output,
+            flows: resolvedFlows
+          }),
+          onStageEvent
+        }
+      );
+      flowQualityReport = resolvedFlowReview.report;
+      flowArtifactId = resolvedFlowReview.layerArtifactId;
+      flowOutput = resolvedFlowReview.layerOutput;
+      const flowLayerResolvedGate = createLayerQualityGate(
+        "domain_flow_consistency",
+        { layer: "flow", kind: "light_review", sourceStage: "quality_repair" },
+        sessionId,
+        [flowArtifactId],
+        flowQualityReport
+      );
+      persistGateReport(repository, flowLayerResolvedGate, sessionId);
+    } else if (!flowQualityReport.passed) {
+      failSession(repository, sessionId, `${describeGateFailure(flowLayerInitialGate)}; LLM repair is disabled in the default pipeline.`);
     }
-  );
-  flowQualityReport = resolvedFlowReview.report;
-  flowArtifactId = resolvedFlowReview.layerArtifactId;
-  flowOutput = resolvedFlowReview.layerOutput;
-  const flowLayerResolvedGate = createLayerQualityGate(
-    "domain_flow_consistency",
-    { layer: "flow", kind: "light_review", sourceStage: "quality_repair" },
-    sessionId,
-    [flowArtifactId],
-    flowQualityReport
-  );
-  persistGateReport(repository, flowLayerResolvedGate, sessionId);
+  }
 
   const domainFlowGate = checkDomainFlowConsistency(sessionId, [domainStage.artifactId, flowArtifactId], {
     domain: domainStage.output,
@@ -1295,86 +1338,93 @@ export async function generateBlueprintFromInput(
   let uiArtifactId = uiStage.artifactId;
   let uiOutput = uiStage.output;
 
-  let uiContractReviewReport = await runLayerQualityReview(
-    repository,
-    stageClient,
-    model,
-    sessionId,
-    "ui_contract_review",
-    "ui_layer",
-    uiArtifactId,
-    {
-      product: productFrameStage.output.product,
-      users: productFrameStage.output.users,
-      domain: domainStage.output,
-      flows: flowOutput,
-      ui: uiOutput
-    },
-    onStageEvent
-  );
-  persistQualityReview(repository, uiContractReviewReport, sessionId);
-  const uiLayerInitialGate = createLayerQualityGate(
-    "flow_ui_coverage",
-    { layer: "ui", kind: "light_review", sourceStage: "ui_contract_review" },
-    sessionId,
-    [uiArtifactId],
-    uiContractReviewReport
-  );
-  persistGateReport(repository, uiLayerInitialGate, sessionId);
-  const uiBlueprintSnapshot = assembleBlueprint({
-    meta: metaForInput(rawInput),
-    understanding: productFrameStage.output.input,
-    product: productFrameStage.output.product,
-    users: productFrameStage.output.users,
-    domain: domainStage.output,
-    flows: flowOutput,
-    ui: uiOutput,
-    visualPolicy: defaultVisualPolicy,
-    generationPolicy: defaultGenerationPolicy,
-    uncertainty: { assumptions: [], unresolvedQuestions: [], notableRisks: [] }
-  });
-  const resolvedUiReview = await resolveLayerQualityBlockers(
-    repository,
-    stageClient,
-    model,
-    sessionId,
-    "ui_layer",
-    uiArtifactId,
-    uiBlueprintSnapshot,
-    uiContractReviewReport,
-    uiLayerInitialGate,
-    maxQualityRepairAttempts,
-    {
-      reviewStage: "ui_contract_review",
-      layerArtifactType: "ui_model",
-      layerSchema: uiModelSchema,
-      layerSchemaName: "UIModel",
-      extractLayerOutput: (resolvedBlueprint) => resolvedBlueprint.ui,
-      applyLayerOutput: (resolvedBlueprint, resolvedUi) => ({
-        ...resolvedBlueprint,
-        ui: resolvedUi
-      }),
-      createReviewPayload: (resolvedUi) => ({
+  if (experimentalLlmReview) {
+    let uiContractReviewReport = await runLayerQualityReview(
+      repository,
+      stageClient,
+      model,
+      sessionId,
+      "ui_contract_review",
+      "ui_layer",
+      uiArtifactId,
+      {
         product: productFrameStage.output.product,
         users: productFrameStage.output.users,
         domain: domainStage.output,
         flows: flowOutput,
-        ui: resolvedUi
-      }),
+        ui: uiOutput
+      },
       onStageEvent
+    );
+    persistQualityReview(repository, uiContractReviewReport, sessionId);
+    const uiLayerInitialGate = createLayerQualityGate(
+      "flow_ui_coverage",
+      { layer: "ui", kind: "light_review", sourceStage: "ui_contract_review" },
+      sessionId,
+      [uiArtifactId],
+      uiContractReviewReport
+    );
+    persistGateReport(repository, uiLayerInitialGate, sessionId);
+
+    if (experimentalLlmRepair) {
+      const uiBlueprintSnapshot = assembleBlueprint({
+        meta: metaForInput(rawInput),
+        understanding: productFrameStage.output.input,
+        product: productFrameStage.output.product,
+        users: productFrameStage.output.users,
+        domain: domainStage.output,
+        flows: flowOutput,
+        ui: uiOutput,
+        visualPolicy: defaultVisualPolicy,
+        generationPolicy: defaultGenerationPolicy,
+        uncertainty: { assumptions: [], unresolvedQuestions: [], notableRisks: [] }
+      });
+      const resolvedUiReview = await resolveLayerQualityBlockers(
+        repository,
+        stageClient,
+        model,
+        sessionId,
+        "ui_layer",
+        uiArtifactId,
+        uiBlueprintSnapshot,
+        uiContractReviewReport,
+        uiLayerInitialGate,
+        maxQualityRepairAttempts,
+        {
+          reviewStage: "ui_contract_review",
+          layerArtifactType: "ui_model",
+          layerSchema: uiModelSchema,
+          layerSchemaName: "UIModel",
+          extractLayerOutput: (resolvedBlueprint) => resolvedBlueprint.ui,
+          applyLayerOutput: (resolvedBlueprint, resolvedUi) => ({
+            ...resolvedBlueprint,
+            ui: resolvedUi
+          }),
+          createReviewPayload: (resolvedUi) => ({
+            product: productFrameStage.output.product,
+            users: productFrameStage.output.users,
+            domain: domainStage.output,
+            flows: flowOutput,
+            ui: resolvedUi
+          }),
+          onStageEvent
+        }
+      );
+      uiContractReviewReport = resolvedUiReview.report;
+      uiArtifactId = resolvedUiReview.layerArtifactId;
+      uiOutput = resolvedUiReview.layerOutput;
+      const uiLayerResolvedGate = createLayerQualityGate(
+        "flow_ui_coverage",
+        { layer: "ui", kind: "light_review", sourceStage: "quality_repair" },
+        sessionId,
+        [uiArtifactId],
+        uiContractReviewReport
+      );
+      persistGateReport(repository, uiLayerResolvedGate, sessionId);
+    } else if (!uiContractReviewReport.passed) {
+      failSession(repository, sessionId, `${describeGateFailure(uiLayerInitialGate)}; LLM repair is disabled in the default pipeline.`);
     }
-  );
-  uiContractReviewReport = resolvedUiReview.report;
-  uiArtifactId = resolvedUiReview.layerArtifactId;
-  uiOutput = resolvedUiReview.layerOutput;
-  const uiLayerResolvedGate = createLayerQualityGate(
-    "flow_ui_coverage",
-    { layer: "ui", kind: "light_review", sourceStage: "quality_repair" },
-    sessionId,
-    [uiArtifactId],
-    uiContractReviewReport
-  );
-  persistGateReport(repository, uiLayerResolvedGate, sessionId);
+  }
 
   const flowUiGate = checkFlowUiCoverage(sessionId, [flowArtifactId, uiArtifactId], {
     flows: flowOutput,
@@ -1557,156 +1607,110 @@ export async function generateBlueprintFromInput(
 
   let qualityReviewReportId = "";
   let semanticReport: BlueprintQualityReport;
-  let qualityAttempts = 0;
 
-  while (true) {
+  if (!experimentalLlmReview) {
     repository.setSessionStatus(sessionId, "quality_reviewing");
-    semanticReport = await runFullSemanticQualityReview(
-      repository,
-      stageClient,
-      model,
-      sessionId,
-      blueprintVersion.id,
-      blueprintArtifactId,
-      activeBlueprint,
-      validationReport,
-      [flowQualityReport, uiContractReviewReport],
-      onStageEvent
-    );
+    semanticReport = reviewBlueprintQuality(sessionId, blueprintVersion.id, activeBlueprint);
     qualityReviewReportId = persistQualityReview(repository, semanticReport, sessionId);
     repository.updateBlueprintVersion(blueprintVersion.id, { qualityReviewReportId });
 
-    const route = routeQualityIssues(semanticReport.issues);
-    if (route === "no_repair_needed") {
-      break;
-    }
-
-    if (route === "manual_blocking_issue") {
-      failSession(repository, sessionId, `${describeQualityFailure(semanticReport)}; non-repairable blockers remain.`);
-    }
-
-    if (qualityAttempts >= maxQualityRepairAttempts) {
+    if (semanticReport.issues.some((issue) => issue.severity === "blocker" || issue.severity === "high")) {
       failSession(
         repository,
         sessionId,
-        `${describeQualityFailure(semanticReport)}; quality repair attempts exhausted after ${qualityAttempts} attempts.`
+        `${describeQualityFailure(semanticReport)}; deterministic default pipeline does not use LLM quality repair.`
       );
     }
+  } else {
+    let qualityAttempts = 0;
 
-    qualityAttempts += 1;
-    repository.setSessionStatus(sessionId, "repair_routing");
-    const repairScope = makeRepairPlanPaths(semanticReport.issues);
-    const repairPlan = makeRepairPlan(
-      sessionId,
-      blueprintVersion.id,
-      route,
-      "quality_review_report",
-      semanticReport.issues.map((item) => item.code),
-      semanticReport.issues.flatMap((item) => item.affectedPaths ?? [item.path]),
-      "Quality review found targeted-repairable semantic or UX issues requiring local quality repair.",
-      maxQualityRepairAttempts,
-      {
-        sourceReportId: semanticReport.id
-      },
-      repairScope
-    );
-    persistRepairPlan(repository, repairPlan, sessionId);
+    while (true) {
+      repository.setSessionStatus(sessionId, "quality_reviewing");
+      semanticReport = await runFullSemanticQualityReview(
+        repository,
+        stageClient,
+        model,
+        sessionId,
+        blueprintVersion.id,
+        blueprintArtifactId,
+        activeBlueprint,
+        validationReport,
+        [],
+        onStageEvent
+      );
+      qualityReviewReportId = persistQualityReview(repository, semanticReport, sessionId);
+      repository.updateBlueprintVersion(blueprintVersion.id, { qualityReviewReportId });
 
-    repository.setSessionStatus(sessionId, "quality_repairing");
-    const locallyQualityRepaired = repairBlueprintQuality(activeBlueprint, semanticReport);
-    const qualityRepairStage = await runBlueprintStage(repository, {
-      model,
-      sessionId,
-      stage: "quality_repair",
-      promptVersion: STAGE_PROMPT_VERSION,
-      instructions: stageInstructions.quality_repair,
-      payload: {
-        candidate: createQualityRepairCandidate(
-          locallyQualityRepaired,
-          repairPlan,
-          semanticReport.issues.map((item) => item.code),
-          "deterministic_quality_repair"
-        ),
-        blueprintId: blueprintVersion.id,
-        validatedBlueprint: locallyQualityRepaired,
-        qualityReviewReport: semanticReport,
-        targetedIssues: semanticReport.issues.filter((item) => item.repairability === "targeted_repairable"),
-        repairRules: {
-          doNotChangeExplicitFacts: true,
-          doNotExpandScope: true,
-          fixOnlyTargetedQualityIssues: true,
-          returnFullCorrectedBlueprint: true
-        },
-        repairPlan
-      },
-      schema: productBlueprintSchema,
-      schemaName: "ProductBlueprintV1",
-      execute: ({ payload, stageRunId }) =>
-        stageClient.runStage({
-          model,
-          sessionId,
-          stage: "quality_repair",
-          stageRunId,
-          promptVersion: STAGE_PROMPT_VERSION,
-          instructions: stageInstructions.quality_repair,
-          payload,
-          schema: productBlueprintSchema,
-          schemaName: "ProductBlueprintV1"
-        }),
-      artifactType: "blueprint",
-      inputArtifactIds: [blueprintArtifactId],
-      onStageEvent
-    });
+      const route = routeQualityIssues(semanticReport.issues);
+      if (route === "no_repair_needed") {
+        break;
+      }
 
-    const candidate = createQualityRepairCandidate(
-      qualityRepairStage.output,
-      repairPlan,
-      semanticReport.issues.map((item) => item.code),
-      "llm_quality_repair"
-    );
-    const candidateArtifactId = persistQualityRepairCandidate(repository, candidate, sessionId);
-    const guardedArtifact = repository.saveArtifact(sessionId, "blueprint", locallyQualityRepaired);
-    const { guardedBlueprint, guardReport } = enforceQualityRepairInvariants({
-      sessionId,
-      blueprintId: blueprintVersion.id,
-      repairPlan,
-      locallyRepaired: locallyQualityRepaired,
-      candidate: candidate.blueprint,
-      candidateArtifactId,
-      guardedArtifactId: guardedArtifact.id
-    });
-    repairGuardReportSchema.parse(guardReport);
-    persistRepairGuardReport(repository, guardReport, sessionId);
-
-    activeBlueprint = guardedBlueprint;
-    blueprintArtifactId = guardedArtifact.id;
-    blueprintVersion = repository.createBlueprintVersion(sessionId, blueprintArtifactId, "quality_repaired");
-    repository.setSessionStatus(sessionId, "quality_repaired");
-
-    repository.setSessionStatus(sessionId, "validating");
-    validationReport = validateBlueprint(sessionId, blueprintVersion.id, activeBlueprint);
-    validationReportId = persistValidationReport(repository, validationReport, sessionId);
-    repository.updateBlueprintVersion(blueprintVersion.id, { validationReportId });
-    if (hasValidationFailure(validationReport)) {
-      if (repairAttempts >= maxRepairAttempts) {
+      if (!experimentalLlmRepair) {
         failSession(
           repository,
           sessionId,
-          `${describeRepairPlan(repairPlan)}; quality repair introduced validation failures beyond bounded repair attempts.`
+          `${describeQualityFailure(semanticReport)}; experimental LLM review is enabled but LLM repair is disabled.`
         );
       }
-      repairAttempts += 1;
-      repository.setSessionStatus(sessionId, "repairing");
-      const locallyRepaired = repairBlueprint(activeBlueprint, validationReport);
-      const repairStage = await runBlueprintStage(repository, {
+
+      if (route === "manual_blocking_issue") {
+        failSession(repository, sessionId, `${describeQualityFailure(semanticReport)}; non-repairable blockers remain.`);
+      }
+
+      if (qualityAttempts >= maxQualityRepairAttempts) {
+        failSession(
+          repository,
+          sessionId,
+          `${describeQualityFailure(semanticReport)}; quality repair attempts exhausted after ${qualityAttempts} attempts.`
+        );
+      }
+
+      qualityAttempts += 1;
+      repository.setSessionStatus(sessionId, "repair_routing");
+      const repairScope = makeRepairPlanPaths(semanticReport.issues);
+      const repairPlan = makeRepairPlan(
+        sessionId,
+        blueprintVersion.id,
+        route,
+        "quality_review_report",
+        semanticReport.issues.map((item) => item.code),
+        semanticReport.issues.flatMap((item) => item.affectedPaths ?? [item.path]),
+        "Quality review found targeted-repairable semantic or UX issues requiring local quality repair.",
+        maxQualityRepairAttempts,
+        {
+          sourceReportId: semanticReport.id
+        },
+        repairScope
+      );
+      persistRepairPlan(repository, repairPlan, sessionId);
+
+      repository.setSessionStatus(sessionId, "quality_repairing");
+      const locallyQualityRepaired = repairBlueprintQuality(activeBlueprint, semanticReport);
+      const qualityRepairStage = await runBlueprintStage(repository, {
         model,
         sessionId,
-        stage: "blueprint_repair",
+        stage: "quality_repair",
         promptVersion: STAGE_PROMPT_VERSION,
-        instructions: stageInstructions.blueprint_repair,
+        instructions: stageInstructions.quality_repair,
         payload: {
-          blueprint: locallyRepaired,
-          issues: validationReport.issues
+          candidate: createQualityRepairCandidate(
+            locallyQualityRepaired,
+            repairPlan,
+            semanticReport.issues.map((item) => item.code),
+            "deterministic_quality_repair"
+          ),
+          blueprintId: blueprintVersion.id,
+          validatedBlueprint: locallyQualityRepaired,
+          qualityReviewReport: semanticReport,
+          targetedIssues: semanticReport.issues.filter((item) => item.repairability === "targeted_repairable"),
+          repairRules: {
+            doNotChangeExplicitFacts: true,
+            doNotExpandScope: true,
+            fixOnlyTargetedQualityIssues: true,
+            returnFullCorrectedBlueprint: true
+          },
+          repairPlan
         },
         schema: productBlueprintSchema,
         schemaName: "ProductBlueprintV1",
@@ -1714,31 +1718,48 @@ export async function generateBlueprintFromInput(
           stageClient.runStage({
             model,
             sessionId,
-            stage: "blueprint_repair",
+            stage: "quality_repair",
             stageRunId,
             promptVersion: STAGE_PROMPT_VERSION,
-            instructions: stageInstructions.blueprint_repair,
+            instructions: stageInstructions.quality_repair,
             payload,
             schema: productBlueprintSchema,
             schemaName: "ProductBlueprintV1"
           }),
         artifactType: "blueprint",
-        inputArtifactIds: [blueprintArtifactId]
+        inputArtifactIds: [blueprintArtifactId],
+        onStageEvent
       });
-      activeBlueprint = repairStage.output;
-      blueprintArtifactId = repairStage.artifactId;
-      blueprintVersion = repository.createBlueprintVersion(sessionId, blueprintArtifactId, "repaired");
+
+      const candidate = createQualityRepairCandidate(
+        qualityRepairStage.output,
+        repairPlan,
+        semanticReport.issues.map((item) => item.code),
+        "llm_quality_repair"
+      );
+      const candidateArtifactId = persistQualityRepairCandidate(repository, candidate, sessionId);
+      const guardedArtifact = repository.saveArtifact(sessionId, "blueprint", locallyQualityRepaired);
+      const { guardedBlueprint, guardReport } = enforceQualityRepairInvariants({
+        sessionId,
+        blueprintId: blueprintVersion.id,
+        repairPlan,
+        locallyRepaired: locallyQualityRepaired,
+        candidate: candidate.blueprint,
+        candidateArtifactId,
+        guardedArtifactId: guardedArtifact.id
+      });
+      repairGuardReportSchema.parse(guardReport);
+      persistRepairGuardReport(repository, guardReport, sessionId);
+
+      activeBlueprint = guardedBlueprint;
+      blueprintArtifactId = guardedArtifact.id;
+      blueprintVersion = repository.createBlueprintVersion(sessionId, blueprintArtifactId, "quality_repaired");
+      repository.setSessionStatus(sessionId, "quality_repaired");
+
       repository.setSessionStatus(sessionId, "validating");
       validationReport = validateBlueprint(sessionId, blueprintVersion.id, activeBlueprint);
       validationReportId = persistValidationReport(repository, validationReport, sessionId);
       repository.updateBlueprintVersion(blueprintVersion.id, { validationReportId });
-      if (hasValidationFailure(validationReport)) {
-        failSession(
-          repository,
-          sessionId,
-          `${describeValidationFailure(validationReport)}; ${describeRepairPlan(repairPlan)} introduced unrepairable deterministic validation failures.`
-        );
-      }
     }
   }
 

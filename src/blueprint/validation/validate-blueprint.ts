@@ -18,6 +18,10 @@ function hasMeaningfulSteps(flow: CoreUserFlow): boolean {
   return flow.steps.filter((step) => step.detail.trim().length > 0).length >= 2;
 }
 
+function expectsVisibleResult(rawInput: string): boolean {
+  return /看到结果|查看结果|结果|quote|报价|answer|output/i.test(rawInput);
+}
+
 function validateFlow(flow: CoreUserFlow, issues: ValidationIssue[]): void {
   if (!flow.trigger.trim()) {
     issues.push(issue("core_flow_missing_trigger", `flows.coreUserFlows.${flow.id}.trigger`, "Core flow must have a trigger."));
@@ -55,6 +59,44 @@ function validateFlow(flow: CoreUserFlow, issues: ValidationIssue[]): void {
         "core_flow_missing_feedback",
         `flows.coreUserFlows.${flow.id}.feedback`,
         "User-visible core flow must have feedback."
+      )
+    );
+  }
+}
+
+function validateVisibleOutcomePreservation(
+  blueprint: ProductBlueprintV1,
+  issues: ValidationIssue[]
+): void {
+  if (!expectsVisibleResult(blueprint.input.raw)) {
+    return;
+  }
+
+  const primaryFlow = blueprint.flows.coreUserFlows[0];
+  if (!primaryFlow) {
+    return;
+  }
+
+  const combinedSignals = [
+    blueprint.product.successDefinition.value,
+    primaryFlow.completionSignal.signal,
+    ...blueprint.ui.pages.map((page) => page.purpose),
+    ...blueprint.ui.pages.flatMap((page) => page.states.map((state) => state.description)),
+    ...blueprint.ui.pages.flatMap((page) => page.secondaryActions.map((action) => action.feedback))
+  ]
+    .join(" ")
+    .toLowerCase();
+
+  const onlyGenericSubmission =
+    /submitted|submission|已提交|提交成功|申请已提交/.test(combinedSignals) &&
+    !/result|quote|报价|answer|output|结果/.test(combinedSignals);
+
+  if (onlyGenericSubmission) {
+    issues.push(
+      issue(
+        "explicit_outcome_not_preserved",
+        "flows.coreUserFlows.0.completionSignal",
+        "The user's visible result outcome was weakened into generic submission feedback. Preserve a visible result/quote/answer/output completion signal."
       )
     );
   }
@@ -249,6 +291,8 @@ function semanticIssues(blueprint: ProductBlueprintV1): ValidationIssue[] {
       issues.push(issue("page_count_exceeds_policy", "ui.pages", "Page count exceeds generation policy."));
     }
   }
+
+  validateVisibleOutcomePreservation(blueprint, issues);
 
   return issues;
 }
