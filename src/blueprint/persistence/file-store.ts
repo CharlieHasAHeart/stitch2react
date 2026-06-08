@@ -7,6 +7,7 @@ import type {
   GenerationArtifact,
   GenerationSession,
   GenerationStageRun,
+  RepairGuardReport,
   RepairPlan,
   ValidationReport
 } from "../types/blueprint.js";
@@ -20,6 +21,7 @@ export type FileStoreCollections = {
   qualityReviewReports: Record<string, BlueprintQualityReport>;
   gateReports: Record<string, GateReport>;
   repairPlans: Record<string, RepairPlan>;
+  repairGuardReports: Record<string, RepairGuardReport>;
 };
 
 function ensureDir(path: string): void {
@@ -48,6 +50,7 @@ export class FileBlueprintStore {
   readonly qualityReviewReportsDir: string;
   readonly gateReportsDir: string;
   readonly repairPlansDir: string;
+  readonly repairGuardReportsDir: string;
   readonly indexesDir: string;
 
   collections: FileStoreCollections;
@@ -62,6 +65,7 @@ export class FileBlueprintStore {
     this.qualityReviewReportsDir = join(rootDir, "quality_review_reports");
     this.gateReportsDir = join(rootDir, "gate_reports");
     this.repairPlansDir = join(rootDir, "repair_plans");
+    this.repairGuardReportsDir = join(rootDir, "repair_guard_reports");
     this.indexesDir = join(rootDir, "indexes");
 
     ensureDir(this.sessionsDir);
@@ -72,6 +76,7 @@ export class FileBlueprintStore {
     ensureDir(this.qualityReviewReportsDir);
     ensureDir(this.gateReportsDir);
     ensureDir(this.repairPlansDir);
+    ensureDir(this.repairGuardReportsDir);
     ensureDir(this.indexesDir);
 
     this.collections = {
@@ -82,7 +87,8 @@ export class FileBlueprintStore {
       validationReports: readJson(join(this.indexesDir, "validation-reports.json"), {}),
       qualityReviewReports: readJson(join(this.indexesDir, "quality-review-reports.json"), {}),
       gateReports: readJson(join(this.indexesDir, "gate-reports.json"), {}),
-      repairPlans: readJson(join(this.indexesDir, "repair-plans.json"), {})
+      repairPlans: readJson(join(this.indexesDir, "repair-plans.json"), {}),
+      repairGuardReports: readJson(join(this.indexesDir, "repair-guard-reports.json"), {})
     };
   }
 
@@ -151,5 +157,11 @@ export class FileBlueprintStore {
     this.collections.repairPlans[plan.id] = plan;
     writeJson(join(this.repairPlansDir, `${plan.id}.json`), plan);
     writeJson(join(this.indexesDir, "repair-plans.json"), this.collections.repairPlans);
+  }
+
+  saveRepairGuardReport(report: RepairGuardReport): void {
+    this.collections.repairGuardReports[report.id] = report;
+    writeJson(join(this.repairGuardReportsDir, `${report.id}.json`), report);
+    writeJson(join(this.indexesDir, "repair-guard-reports.json"), this.collections.repairGuardReports);
   }
 }

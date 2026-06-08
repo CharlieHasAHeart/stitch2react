@@ -1,10 +1,106 @@
 import { productBlueprintSchema } from "../schemas/blueprint.js";
-import type { ProductBlueprintV1, QualityReviewReport } from "../types/blueprint.js";
+import type {
+  PageContract,
+  PageRoleClassification,
+  ProductBlueprintV1,
+  QualityReviewReport
+} from "../types/blueprint.js";
 
 const desktopBreakpoints = ["1920x1080", "1440x900", "2560x1440"];
 
 function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function setOptionalContactQuoteRequestShape(repaired: ProductBlueprintV1): void {
+  for (const entity of repaired.domain.entities) {
+    if (entity.id !== "quote_request") {
+      continue;
+    }
+
+    const requiredDetailField = entity.fields.find((field) => /request|detail|description/i.test(field.name));
+    if (!requiredDetailField) {
+      entity.fields.push({
+        name: "requestDetails",
+        type: "string",
+        required: true,
+        description: "Main quote request details required to produce a visible result."
+      });
+    }
+
+    for (const field of entity.fields) {
+      if (/contact|phone|mobile|email/i.test(field.name)) {
+        field.required = false;
+        field.description = "Optional contact information when the business later chooses to follow up.";
+      }
+    }
+  }
+}
+
+function softenImmediateQuoteAssumption(repaired: ProductBlueprintV1): void {
+  repaired.product.primaryValueProposition.value =
+    "Submit a quote request without login and see a visible result after submission.";
+
+  repaired.product.successDefinition.value =
+    "User submits the request and sees a visible result after submission.";
+
+  repaired.product.successDefinition.source = "defaulted";
+  repaired.product.successDefinition.confidence = "medium";
+  repaired.product.successDefinition.evidence =
+    "The explicit requirement is only that the user submits and sees a result, not that the result must be an instant numeric quote.";
+
+  repaired.domain.businessRules = repaired.domain.businessRules.map((rule) => {
+    if (/立即|即时|预估|amount|金额|QuoteResult/i.test(rule)) {
+      return "提交报价申请后，系统必须返回一个用户可见的报价结果或明确结果状态。";
+    }
+    return rule;
+  });
+
+  for (const flow of repaired.flows.coreUserFlows) {
+    const enterStep = flow.steps[0];
+    if (enterStep) {
+      enterStep.detail =
+        "访客在报价申请表单中填写生成可见结果所需的最小必要信息，例如报价对象或服务类型、数量或规格，以及必要的申请说明。联系方式仅在业务确有需要时作为可选补充信息。";
+    }
+
+    const resultGenerationStep = flow.steps.find((step) => step.id.includes("generate") || /生成报价结果/.test(step.label));
+    if (resultGenerationStep) {
+      resultGenerationStep.detail =
+        "系统基于已提交的 QuoteRequest 生成并返回当前申请对应的可见结果；默认不把结果类型锁定为即时金额，可为预估结果、结果摘要或明确的结果状态说明。";
+    }
+
+    const resultFeedbackStep = flow.steps.find((step) => step.kind === "feedback");
+    if (resultFeedbackStep) {
+      resultFeedbackStep.label = "展示结果并保留再次调整入口";
+      resultFeedbackStep.detail =
+        "系统在结果区域清晰展示当前申请的可见结果；当用户已经看到结果时，本次主流程即视为完成。若用户希望调整参数，可通过次级动作“修改信息并重新计算”返回编辑态后再次提交。";
+    }
+
+    flow.completionSignal = {
+      userVisible: true,
+      signal: "用户已在页面中看到当前申请对应的结果"
+    };
+
+    flow.feedback = flow.feedback.map((item, index) => {
+      if (index === 0) {
+        return "若缺少生成结果所需的必填信息，系统会给出明确字段反馈；联系方式只有在被填写时才校验其格式。";
+      }
+      if (/报价金额|预估/.test(item)) {
+        return "系统展示当前申请对应的结果内容与结果说明。";
+      }
+      return item;
+    });
+  }
+
+  for (const feedbackFlow of repaired.flows.feedbackFlows) {
+    feedbackFlow.name = feedbackFlow.name.replace("（含结果态修改重算入口）", "");
+    feedbackFlow.states = feedbackFlow.states.map((state) => {
+      if (/result_ready/.test(state)) {
+        return "result_ready：结果已可见，用户可选择结束本次任务，或通过次级动作重新修改信息。";
+      }
+      return state;
+    });
+  }
 }
 
 function makeResultPageAction(pageId: string) {
@@ -14,6 +110,58 @@ function makeResultPageAction(pageId: string) {
     kind: "secondary" as const,
     targetPageId: "quote_request_form",
     feedback: "Lets the user return to the request form and submit a new input"
+  };
+}
+
+function classifyPageRole(page: PageContract): PageRoleClassification {
+  const haystack = [page.id, page.name, page.route, page.purpose].join(" ").toLowerCase();
+  const evidence: string[] = [];
+
+  if (page.readonly) {
+    evidence.push("readonly=true");
+  }
+  if (page.confirmationOnly) {
+    evidence.push("confirmationOnly=true");
+  }
+  if (/result|success|confirmation|complete|completed/.test(haystack)) {
+    evidence.push("result-like-role-word");
+  }
+  if (/show|display/.test(page.purpose.toLowerCase()) && /result|confirmation|output/.test(page.purpose.toLowerCase())) {
+    evidence.push("purpose-shows-result");
+  }
+  if (page.primaryAction?.kind === "primary" && page.primaryAction.triggersFlowId) {
+    evidence.push("input-primary-action");
+  }
+  if (/collect|enter|edit|request|create|submit|configure/.test(page.purpose.toLowerCase())) {
+    evidence.push("input-purpose");
+  }
+  if (page.componentRequirements.some((component) => /form|input/.test(component.type))) {
+    evidence.push("has-form-components");
+  }
+
+  if (page.readonly || page.confirmationOnly || evidence.includes("purpose-shows-result")) {
+    return {
+      pageId: page.id,
+      role: "result",
+      evidence,
+      confidence: "high"
+    };
+  }
+
+  if (evidence.includes("input-purpose") || evidence.includes("has-form-components") || evidence.includes("input-primary-action")) {
+    return {
+      pageId: page.id,
+      role: "input",
+      evidence,
+      confidence: "high"
+    };
+  }
+
+  return {
+    pageId: page.id,
+    role: "unknown",
+    evidence,
+    confidence: "low"
   };
 }
 
@@ -32,25 +180,23 @@ export function repairBlueprintQuality(
         break;
       }
       case "explicit_outcome_weakened": {
-        repaired.product.successDefinition.value =
-          "User submits the request and sees an immediate estimated quote or result.";
-        repaired.product.successDefinition.source = "defaulted";
-        repaired.product.successDefinition.confidence = "medium";
-        repaired.product.successDefinition.evidence =
-          "The user explicitly asked to submit and see a result, so the MVP keeps an immediate visible outcome.";
+        softenImmediateQuoteAssumption(repaired);
 
         const primaryFlow = repaired.flows.coreUserFlows[0];
         if (primaryFlow) {
           primaryFlow.completionSignal = {
             userVisible: true,
-            signal: "An immediate estimated quote or result is visible after submission"
+            signal: "A visible result for the current submission is shown after submission"
           };
         }
 
         for (const page of repaired.ui.pages) {
-          const isResultPage = page.readonly || page.confirmationOnly || /result|quote/i.test(page.id);
-          if (isResultPage) {
-            page.purpose = "Show the immediate estimated quote or result after the request is submitted.";
+          const pageRole = classifyPageRole(page);
+          if (pageRole.role === "result") {
+            page.purpose = "Show the immediate estimated result after submission.";
+          }
+          if (pageRole.role === "input") {
+            page.purpose = "Collect the user's required input and submit it to generate the visible result.";
           }
         }
 
@@ -59,7 +205,7 @@ export function repairBlueprintQuality(
             return {
               ...item,
               defaultDecision:
-                "Show an immediate estimated quote or result using a deterministic placeholder calculation."
+                "Show a visible result after submission without assuming the result must be an immediate numeric quote."
             };
           }
           return item;
@@ -70,7 +216,7 @@ export function repairBlueprintQuality(
             return {
               ...item,
               defaultDecision:
-                "Show an immediate estimated quote or result using a deterministic placeholder calculation."
+                "Show a visible result after submission without assuming the result must be an immediate numeric quote."
             };
           }
           return item;
@@ -123,6 +269,48 @@ export function repairBlueprintQuality(
                 { name: "email", type: "string", required: false, description: "Optional contact email" }
               ];
             }
+          }
+        }
+        break;
+      }
+      case "flow_quality_weak": {
+        setOptionalContactQuoteRequestShape(repaired);
+        for (const flow of repaired.flows.coreUserFlows) {
+          const entryStep = flow.steps.find((step) => step.kind === "action");
+          if (entryStep) {
+            entryStep.detail =
+              "访客填写生成可见结果所需的最小必要信息，例如报价对象或服务类型、数量或规格，以及必要的申请说明；联系方式如出现，仅作为可选补充字段。";
+          }
+          const validationStep = flow.steps.find((step) => step.kind === "validation");
+          if (validationStep) {
+            validationStep.detail =
+              "系统校验生成结果所需的必填信息是否完整；若用户填写了联系方式，再额外检查其格式是否合法。";
+          }
+          if (flow.feedback[0]) {
+            flow.feedback[0] =
+              "若缺少生成结果所需的必填信息，系统会给出明确反馈；联系方式只有在填写时才校验其格式。";
+          }
+          const resultFeedbackStep = flow.steps.find((step) => step.kind === "feedback");
+          if (resultFeedbackStep) {
+            resultFeedbackStep.detail =
+              "系统展示当前申请对应的可见结果；“修改信息并重新计算”仅作为次级动作，不覆盖当前结果已可见的完成态。";
+          }
+        }
+        break;
+      }
+      case "uncertainty_default_misleading": {
+        setOptionalContactQuoteRequestShape(repaired);
+        softenImmediateQuoteAssumption(repaired);
+        break;
+      }
+      case "ui_contract_ambiguous": {
+        for (const page of repaired.ui.pages) {
+          const pageRole = classifyPageRole(page);
+          if (pageRole.role === "input") {
+            page.purpose = "Collect the user's required input and submit it to generate the visible result.";
+          }
+          if (pageRole.role === "result") {
+            page.purpose = "Show the immediate estimated result after submission.";
           }
         }
         break;

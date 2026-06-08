@@ -1405,6 +1405,7 @@ export type PipelineStage =
   | "repair_routing"
   | "blueprint_repair"
   | "quality_repair"
+  | "post_repair_guard"
   | "freeze";
 
 export type PipelineGate =
@@ -1557,6 +1558,31 @@ export type RepairPlan = {
     | "quality_review_report";
   sourceIssueCodes: string[];
   affectedPaths: string[];
+
+  /**
+   * Paths that the selected repair route may modify.
+   * LLM-assisted repair must be constrained to these paths or a stricter allowlist.
+   */
+  allowedMutationPaths: string[];
+
+  /**
+   * Paths that must not be changed or reverted by later LLM repair output.
+   * Protected paths include deterministic local repair outputs, explicit-source facts,
+   * ids, references, and raw input.
+   */
+  protectedPaths: string[];
+
+  /**
+   * True whenever an LLM-assisted repair candidate is allowed.
+   * The candidate must pass deterministic guard before it can become active.
+   */
+  requiresPostRepairGuard: boolean;
+
+  /**
+   * True whenever the repaired artifact must be reviewed again before the next gate can pass.
+   */
+  requiresReviewAfterRepair: boolean;
+
   rationale: string;
   maxAttempts: number;
   createdAt: string;
@@ -1599,14 +1625,99 @@ export type QualityRepairInput = {
   };
 };
 
-export type QualityRepairOutput = {
+export type QualityRepairCandidate = {
   blueprint: ProductBlueprintV1;
+  source: "llm_quality_repair" | "deterministic_quality_repair";
+  repairPlanId: string;
+  targetIssueCodes: string[];
+  createdAt: string;
+};
+
+export type QualityRepairOutput = {
+  /**
+   * This is a candidate blueprint, not the active repaired blueprint.
+   * It must pass the post-repair guard before persistence as the active version.
+   */
+  candidate: QualityRepairCandidate;
 };
 ```
 
-Quality repair must return a full corrected blueprint, not a patch, so the result can be persisted as a new blueprint version and revalidated.
+Quality repair may return a full corrected blueprint for persistence compatibility, but the returned blueprint is only a **repair candidate** until deterministic guard and validation pass.
 
-### 33.8 Freeze eligibility
+### 33.8 Post-repair guard
+
+```ts
+export type RepairGuardChangeReason =
+  | "protected_field_reverted"
+  | "outside_allowed_repair_scope"
+  | "explicit_fact_changed"
+  | "id_or_reference_changed"
+  | "deterministic_invariant_reapplied";
+
+export type RepairGuardChange = {
+  path: string;
+  candidateValue: unknown;
+  guardedValue: unknown;
+  reason: RepairGuardChangeReason;
+};
+
+export type RepairGuardReport = {
+  id: string;
+  sessionId: string;
+  blueprintId: string;
+  repairPlanId: string;
+  candidateArtifactId: string;
+  guardedArtifactId: string;
+  protectedFields: string[];
+  allowedMutationPaths: string[];
+  revertedChanges: RepairGuardChange[];
+  rejectedChanges: RepairGuardChange[];
+  reappliedInvariants: string[];
+  passed: boolean;
+  createdAt: string;
+};
+```
+
+The post-repair guard protects deterministic local repair output from being reverted by later LLM repair candidates. It must run before a quality repair candidate becomes the active repaired blueprint.
+
+### 33.9 Page role classification
+
+```ts
+export type PageRole =
+  | "input"
+  | "result"
+  | "confirmation"
+  | "readonly_detail"
+  | "dashboard"
+  | "supporting"
+  | "unknown";
+
+export type PageRoleClassification = {
+  pageId: string;
+  role: PageRole;
+  evidence: string[];
+  confidence: Confidence;
+};
+```
+
+Page role classification is a review/repair helper. It does not need to be stored inside `ProductBlueprintV1`, but it should be persisted in repair/debug artifacts when used.
+
+Business nouns such as `quote`, `booking`, `order`, `request`, `invoice`, `report`, or `assessment` are not sufficient evidence that a page is a result page.
+
+### 33.10 Pipeline artifact kinds
+
+```ts
+export type PipelineArtifactKind =
+  | "gate_report"
+  | "validation_report"
+  | "quality_review_report"
+  | "layer_quality_review_report"
+  | "repair_plan"
+  | "repair_guard_report"
+  | "quality_repair_candidate";
+```
+
+### 33.11 Freeze eligibility
 
 ```ts
 export type FreezeEligibility = {

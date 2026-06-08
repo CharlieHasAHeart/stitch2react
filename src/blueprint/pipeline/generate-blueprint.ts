@@ -8,8 +8,12 @@ import { repairBlueprint } from "../repair/repair-blueprint.js";
 import { repairBlueprintQuality } from "../repair/quality-repair.js";
 import {
   blueprintQualityReportSchema,
+  flowModelSchema,
   globalGenerationPolicySeedSchema,
-  productBlueprintSchema
+  productBlueprintSchema,
+  qualityRepairCandidateSchema,
+  repairGuardReportSchema,
+  uiModelSchema
 } from "../schemas/blueprint.js";
 import { OpenAIResponsesStageClient } from "../stages/openai-responses-client.js";
 import { runBlueprintStage } from "../stages/stage-runner.js";
@@ -24,6 +28,8 @@ import type {
   GateReport,
   GlobalGenerationPolicySeed,
   ProductBlueprintV1,
+  QualityRepairCandidate,
+  RepairGuardReport,
   RepairPlan,
   RepairRoute,
   ValidationIssue,
@@ -31,6 +37,7 @@ import type {
 } from "../types/blueprint.js";
 import { createId } from "../shared/ids.js";
 import { validateBlueprint } from "../validation/validate-blueprint.js";
+import type { z } from "zod";
 
 export type GenerateBlueprintOptions = {
   artifactsRoot?: string;
@@ -128,6 +135,24 @@ function persistRepairPlan(
   return plan.id;
 }
 
+function persistRepairGuardReport(
+  repository: BlueprintRepository,
+  report: RepairGuardReport,
+  sessionId: string
+): string {
+  repository.saveRepairGuardReport(report);
+  repository.saveArtifact(sessionId, "repair_guard_report", report);
+  return report.id;
+}
+
+function persistQualityRepairCandidate(
+  repository: BlueprintRepository,
+  candidate: QualityRepairCandidate,
+  sessionId: string
+): string {
+  return repository.saveArtifact(sessionId, "quality_repair_candidate", candidate).id;
+}
+
 function failSession(repository: BlueprintRepository, sessionId: string, message: string): never {
   const fullMessage = `[${sessionId}] ${message}`;
   repository.updateSession(sessionId, {
@@ -178,6 +203,165 @@ function describeQualityFailure(report: BlueprintQualityReport): string {
     .map((issue) => issue.code)
     .join(", ") || "unknown_issue";
   return `Quality review ${report.id} blocked: ${codes}`;
+}
+
+const protectedQualityRepairPaths = [
+  "ui.appStructure.shell",
+  "ui.responsivePolicy.mobileFirst",
+  "ui.responsivePolicy.breakpoints",
+  "generationPolicy.stitchGenerationRules.requirePrimaryActionInEveryPage",
+  "input.raw"
+];
+
+function clone<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function getByPath(root: unknown, path: string): unknown {
+  const normalized = path.replace(/\[(\d+)\]/g, ".$1");
+  return normalized.split(".").filter(Boolean).reduce<unknown>((current, segment) => {
+    if (current == null || typeof current !== "object") {
+      return undefined;
+    }
+    return (current as Record<string, unknown>)[segment];
+  }, root);
+}
+
+function setByPath(root: unknown, path: string, value: unknown): void {
+  const normalized = path.replace(/\[(\d+)\]/g, ".$1");
+  const segments = normalized.split(".").filter(Boolean);
+  let current = root as Record<string, unknown>;
+  for (const segment of segments.slice(0, -1)) {
+    const next = current[segment];
+    if (!next || typeof next !== "object") {
+      current[segment] = {};
+    }
+    current = current[segment] as Record<string, unknown>;
+  }
+  current[segments.at(-1) as string] = value;
+}
+
+function makeRepairPlanPaths(issues: BlueprintQualityIssue[]): { allowedMutationPaths: string[]; protectedPaths: string[] } {
+  const allowed = Array.from(new Set(issues.flatMap((issue) => issue.affectedPaths ?? [issue.path])));
+  return {
+    allowedMutationPaths: allowed,
+    protectedPaths: protectedQualityRepairPaths
+  };
+}
+
+function makeLayerRepairAcceptanceCriteria(
+  reviewStage: LayerReviewStage,
+  issues: BlueprintQualityIssue[]
+): Array<{ issueCode: string; mustSatisfy: string[] }> {
+  return issues.map((issue) => {
+    switch (issue.code) {
+      case "uncertainty_default_misleading":
+        return {
+          issueCode: issue.code,
+          mustSatisfy: [
+            "Do not force contact information to be required unless that requirement is explicit in the user input or already guaranteed by deterministic upstream facts.",
+            "Do not lock the result into an immediate numeric quote when the original request only requires a visible result after submission.",
+            "Any defaulted result policy must remain broad enough to cover visible-result outcomes without overcommitting business capability."
+          ]
+        };
+      case "explicit_outcome_weakened":
+        return {
+          issueCode: issue.code,
+          mustSatisfy: [
+            "The flow completion signal must clearly preserve: submit, then see a visible result.",
+            "If a retry or modify action exists after result display, it must remain secondary to the completed result-visible state.",
+            "Do not weaken the core outcome into generic submission acknowledgement."
+          ]
+        };
+      case "flow_quality_weak":
+        return {
+          issueCode: issue.code,
+          mustSatisfy: [
+            "The set of required user inputs, validation checks, and feedback messages must be internally consistent.",
+            "Optional contact information must not be described as mandatory in one step and optional elsewhere.",
+            "Recovery and result-display semantics must align with the stated state transitions and visible completion signal."
+          ]
+        };
+      case "ui_contract_ambiguous":
+        return {
+          issueCode: issue.code,
+          mustSatisfy: [
+            "If result display and editability coexist, clearly state whether editing is secondary after the result is already visible.",
+            "Do not leave result-ready interaction semantics ambiguous."
+          ]
+        };
+      default:
+        return {
+          issueCode: issue.code,
+          mustSatisfy: [
+            "Repair only the targeted issue and make the repaired layer pass the same light review when rerun."
+          ]
+        };
+    }
+  });
+}
+
+function createQualityRepairCandidate(
+  blueprint: ProductBlueprintV1,
+  repairPlan: RepairPlan,
+  targetIssueCodes: string[],
+  source: QualityRepairCandidate["source"]
+): QualityRepairCandidate {
+  return {
+    blueprint,
+    source,
+    repairPlanId: repairPlan.id,
+    targetIssueCodes,
+    createdAt: nowIso()
+  };
+}
+
+function enforceQualityRepairInvariants(input: {
+  sessionId: string;
+  blueprintId: string;
+  repairPlan: RepairPlan;
+  locallyRepaired: ProductBlueprintV1;
+  candidate: ProductBlueprintV1;
+  candidateArtifactId: string;
+  guardedArtifactId: string;
+}): { guardedBlueprint: ProductBlueprintV1; guardReport: RepairGuardReport } {
+  const guardedBlueprint = clone(input.candidate);
+  const revertedChanges: RepairGuardReport["revertedChanges"] = [];
+  const rejectedChanges: RepairGuardReport["rejectedChanges"] = [];
+  const reappliedInvariants: string[] = [];
+
+  for (const path of input.repairPlan.protectedPaths) {
+    const deterministicValue = getByPath(input.locallyRepaired, path);
+    const candidateValue = getByPath(guardedBlueprint, path);
+    if (JSON.stringify(candidateValue) !== JSON.stringify(deterministicValue)) {
+      setByPath(guardedBlueprint, path, deterministicValue);
+      revertedChanges.push({
+        path,
+        candidateValue,
+        guardedValue: deterministicValue,
+        reason: "protected_field_reverted"
+      });
+      reappliedInvariants.push(path);
+    }
+  }
+
+  const guardReport: RepairGuardReport = {
+    id: createId("guard"),
+    sessionId: input.sessionId,
+    blueprintId: input.blueprintId,
+    repairPlanId: input.repairPlan.id,
+    candidateArtifactId: input.candidateArtifactId,
+    guardedArtifactId: input.guardedArtifactId,
+    protectedFields: input.repairPlan.protectedPaths,
+    allowedMutationPaths: input.repairPlan.allowedMutationPaths,
+    revertedChanges,
+    rejectedChanges,
+    reappliedInvariants,
+    passed: true,
+    createdAt: nowIso()
+  };
+
+  return { guardedBlueprint, guardReport };
 }
 
 function checkInputContract(
@@ -405,8 +589,19 @@ function routeQualityIssues(issues: BlueprintQualityIssue[]): RepairRoute {
   return "quality_repair";
 }
 
+type LayerReviewStage = "flow_quality_review" | "ui_contract_review";
+type LayerArtifactType = "flow_model" | "ui_model";
+type LayerSchemaName = "FlowModel" | "UIModel";
 
-async function resolveLayerQualityBlockers(
+type LayerRepairResolution<TLayerOutput> = {
+  blueprint: ProductBlueprintV1;
+  blueprintArtifactId: string;
+  report: BlueprintQualityReport;
+  layerArtifactId: string;
+  layerOutput: TLayerOutput;
+};
+
+async function resolveLayerQualityBlockers<TLayerOutput, TSchema extends z.ZodType<TLayerOutput>>(
   repository: BlueprintRepository,
   stageClient: BlueprintStageClient,
   model: string,
@@ -416,17 +611,35 @@ async function resolveLayerQualityBlockers(
   blueprint: ProductBlueprintV1,
   report: BlueprintQualityReport,
   sourceGate: GateReport,
-  maxQualityRepairAttempts: number
-): Promise<{ blueprint: ProductBlueprintV1; blueprintArtifactId: string; report: BlueprintQualityReport }> {
+  maxQualityRepairAttempts: number,
+  config: {
+    reviewStage: LayerReviewStage;
+    layerArtifactType: LayerArtifactType;
+    layerSchema: TSchema;
+    layerSchemaName: LayerSchemaName;
+    extractLayerOutput: (blueprint: ProductBlueprintV1) => TLayerOutput;
+    applyLayerOutput: (blueprint: ProductBlueprintV1, layerOutput: TLayerOutput) => ProductBlueprintV1;
+    createReviewPayload: (layerOutput: TLayerOutput) => unknown;
+    onStageEvent?: (event: StageEvent) => void;
+  }
+): Promise<LayerRepairResolution<TLayerOutput>> {
   let activeBlueprint = blueprint;
   let activeArtifactId = blueprintArtifactId;
   let activeReport = report;
+  let activeLayerArtifactId = blueprintArtifactId;
+  let activeLayerOutput = config.extractLayerOutput(blueprint);
   let attempts = 0;
 
   while (true) {
     const route = routeQualityIssues(activeReport.issues);
     if (route === "no_repair_needed") {
-      return { blueprint: activeBlueprint, blueprintArtifactId: activeArtifactId, report: activeReport };
+      return {
+        blueprint: activeBlueprint,
+        blueprintArtifactId: activeArtifactId,
+        report: activeReport,
+        layerArtifactId: activeLayerArtifactId,
+        layerOutput: activeLayerOutput
+      };
     }
 
     if (route === "manual_blocking_issue") {
@@ -443,6 +656,7 @@ async function resolveLayerQualityBlockers(
 
     attempts += 1;
     repository.setSessionStatus(sessionId, "repair_routing");
+    const repairScope = makeRepairPlanPaths(activeReport.issues);
     const repairPlan = makeRepairPlan(
       sessionId,
       blueprintVersionId,
@@ -456,12 +670,14 @@ async function resolveLayerQualityBlockers(
         sourceReportId: sourceGate.id,
         sourceGate: sourceGate.gate,
         sourceGateContext: sourceGate.context
-      }
+      },
+      repairScope
     );
     persistRepairPlan(repository, repairPlan, sessionId);
 
     repository.setSessionStatus(sessionId, "quality_repairing");
     const locallyQualityRepaired = repairBlueprintQuality(activeBlueprint, activeReport);
+    const deterministicLayerOutput = config.extractLayerOutput(locallyQualityRepaired);
     const qualityRepairStage = await runBlueprintStage(repository, {
       model,
       sessionId,
@@ -469,20 +685,44 @@ async function resolveLayerQualityBlockers(
       promptVersion: STAGE_PROMPT_VERSION,
       instructions: stageInstructions.quality_repair,
       payload: {
+        candidate: createQualityRepairCandidate(
+          locallyQualityRepaired,
+          repairPlan,
+          activeReport.issues.map((item) => item.code),
+          "deterministic_quality_repair"
+        ),
         blueprintId: blueprintVersionId,
         validatedBlueprint: locallyQualityRepaired,
         qualityReviewReport: activeReport,
         targetedIssues: activeReport.issues.filter((item) => item.repairability === "targeted_repairable"),
+        acceptanceCriteria: makeLayerRepairAcceptanceCriteria(
+          config.reviewStage,
+          activeReport.issues.filter((item) => item.repairability === "targeted_repairable")
+        ),
+        allowedMutationPaths: repairPlan.allowedMutationPaths,
+        forbiddenMutations: {
+          doNotChangeExplicitFacts: true,
+          doNotExpandScope: true,
+          doNotIntroduceAuthentication: true,
+          doNotIntroducePayments: true,
+          doNotIntroduceAdminOrBackofficeScope: true,
+          preserveExistingIdsAndReferences: true
+        },
+        reviewExpectation: {
+          sameLightReviewWillBeRerun: true,
+          mustClearHighAndBlockerIssues: true
+        },
         repairRules: {
           doNotChangeExplicitFacts: true,
           doNotExpandScope: true,
           fixOnlyTargetedQualityIssues: true,
-          returnFullCorrectedBlueprint: true
+          returnFullCorrectedBlueprint: false,
+          returnOnlyTheRepairedLayerArtifact: true
         },
         repairPlan
       },
-      schema: productBlueprintSchema,
-      schemaName: "ProductBlueprintV1",
+      schema: config.layerSchema,
+      schemaName: config.layerSchemaName,
       execute: ({ payload, stageRunId }) =>
         stageClient.runStage({
           model,
@@ -492,21 +732,52 @@ async function resolveLayerQualityBlockers(
           promptVersion: STAGE_PROMPT_VERSION,
           instructions: stageInstructions.quality_repair,
           payload,
-          schema: productBlueprintSchema,
-          schemaName: "ProductBlueprintV1"
+          schema: config.layerSchema,
+          schemaName: config.layerSchemaName
         }),
-      artifactType: "blueprint",
+      artifactType: config.layerArtifactType,
       inputArtifactIds: [activeArtifactId]
     });
 
-    activeBlueprint = qualityRepairStage.output;
-    activeArtifactId = qualityRepairStage.artifactId;
-    activeReport = {
-      ...activeReport,
-      passed: true,
-      issues: []
-    };
+    const candidate = createQualityRepairCandidate(
+      config.applyLayerOutput(activeBlueprint, qualityRepairStage.output as TLayerOutput),
+      repairPlan,
+      activeReport.issues.map((item) => item.code),
+      "llm_quality_repair"
+    );
+    const candidateArtifactId = persistQualityRepairCandidate(repository, candidate, sessionId);
+    const guardedArtifact = repository.saveArtifact(sessionId, "blueprint", config.applyLayerOutput(activeBlueprint, deterministicLayerOutput));
+    const { guardedBlueprint, guardReport } = enforceQualityRepairInvariants({
+      sessionId,
+      blueprintId: blueprintVersionId,
+      repairPlan,
+      locallyRepaired: locallyQualityRepaired,
+      candidate: candidate.blueprint,
+      candidateArtifactId,
+      guardedArtifactId: guardedArtifact.id
+    });
+    repairGuardReportSchema.parse(guardReport);
+    persistRepairGuardReport(repository, guardReport, sessionId);
+
+    activeBlueprint = guardedBlueprint;
+    activeArtifactId = guardedArtifact.id;
+    activeLayerOutput = config.extractLayerOutput(guardedBlueprint);
+    const repairedLayerArtifact = repository.saveArtifact(sessionId, config.layerArtifactType, activeLayerOutput);
+    activeLayerArtifactId = repairedLayerArtifact.id;
     repository.setSessionStatus(sessionId, "quality_repaired");
+
+    activeReport = await runLayerQualityReview(
+      repository,
+      stageClient,
+      model,
+      sessionId,
+      config.reviewStage,
+      blueprintVersionId,
+      activeLayerArtifactId,
+      config.createReviewPayload(activeLayerOutput),
+      config.onStageEvent
+    );
+    persistQualityReview(repository, activeReport, sessionId);
   }
 }
 
@@ -519,7 +790,8 @@ function makeRepairPlan(
   affectedPaths: string[],
   rationale: string,
   maxAttempts: number,
-  metadata: Pick<RepairPlan, "sourceReportId" | "sourceGate" | "sourceGateContext"> = {}
+  metadata: Pick<RepairPlan, "sourceReportId" | "sourceGate" | "sourceGateContext"> = {},
+  issueMetadata?: { allowedMutationPaths: string[]; protectedPaths: string[] }
 ): RepairPlan {
   return {
     id: createId("plan"),
@@ -532,6 +804,10 @@ function makeRepairPlan(
     sourceGateContext: metadata.sourceGateContext,
     sourceIssueCodes,
     affectedPaths,
+    allowedMutationPaths: issueMetadata?.allowedMutationPaths ?? affectedPaths,
+    protectedPaths: issueMetadata?.protectedPaths ?? protectedQualityRepairPaths,
+    requiresPostRepairGuard: route === "quality_repair",
+    requiresReviewAfterRepair: route === "quality_repair",
     rationale,
     maxAttempts,
     createdAt: nowIso()
@@ -801,7 +1077,7 @@ export async function generateBlueprintFromInput(
   });
   repository.setSessionStatus(sessionId, "domain_generated");
 
-  const flowStage = await runBlueprintStage(repository, {
+  const initialFlowStage = await runBlueprintStage(repository, {
     model,
     sessionId,
     stage: "flow_modeling",
@@ -833,6 +1109,8 @@ export async function generateBlueprintFromInput(
     onStageEvent
   });
   repository.setSessionStatus(sessionId, "flows_generated");
+  let flowArtifactId = initialFlowStage.artifactId;
+  let flowOutput = initialFlowStage.output;
 
   const flowBlueprintSnapshot = assembleBlueprint({
     meta: metaForInput(rawInput),
@@ -840,7 +1118,7 @@ export async function generateBlueprintFromInput(
     product: productFrameStage.output.product,
     users: productFrameStage.output.users,
     domain: domainStage.output,
-    flows: flowStage.output,
+    flows: flowOutput,
     ui: {
       appStructure: { shell: "single_page", pageOrder: [] },
       navigation: { type: "minimal", globalNavItems: [] },
@@ -859,13 +1137,13 @@ export async function generateBlueprintFromInput(
     sessionId,
     "flow_quality_review",
     "flow_layer",
-    flowStage.artifactId,
+    flowArtifactId,
     {
       input: productFrameStage.output.input,
       product: productFrameStage.output.product,
       users: productFrameStage.output.users,
       domain: domainStage.output,
-      flows: flowStage.output
+      flows: flowOutput
     },
     onStageEvent
   );
@@ -874,7 +1152,7 @@ export async function generateBlueprintFromInput(
     "domain_flow_consistency",
     { layer: "flow", kind: "light_review", sourceStage: "flow_quality_review" },
     sessionId,
-    [flowStage.artifactId],
+    [flowArtifactId],
     flowQualityReport
   );
   persistGateReport(repository, flowLayerInitialGate, sessionId);
@@ -884,25 +1162,46 @@ export async function generateBlueprintFromInput(
     model,
     sessionId,
     "flow_layer",
-    flowStage.artifactId,
+    flowArtifactId,
     flowBlueprintSnapshot,
     flowQualityReport,
     flowLayerInitialGate,
-    maxQualityRepairAttempts
+    maxQualityRepairAttempts,
+    {
+      reviewStage: "flow_quality_review",
+      layerArtifactType: "flow_model",
+      layerSchema: flowModelSchema,
+      layerSchemaName: "FlowModel",
+      extractLayerOutput: (resolvedBlueprint) => resolvedBlueprint.flows,
+      applyLayerOutput: (resolvedBlueprint, resolvedFlows) => ({
+        ...resolvedBlueprint,
+        flows: resolvedFlows
+      }),
+      createReviewPayload: (resolvedFlows) => ({
+        input: productFrameStage.output.input,
+        product: productFrameStage.output.product,
+        users: productFrameStage.output.users,
+        domain: domainStage.output,
+        flows: resolvedFlows
+      }),
+      onStageEvent
+    }
   );
   flowQualityReport = resolvedFlowReview.report;
+  flowArtifactId = resolvedFlowReview.layerArtifactId;
+  flowOutput = resolvedFlowReview.layerOutput;
   const flowLayerResolvedGate = createLayerQualityGate(
     "domain_flow_consistency",
     { layer: "flow", kind: "light_review", sourceStage: "quality_repair" },
     sessionId,
-    [resolvedFlowReview.blueprintArtifactId],
+    [flowArtifactId],
     flowQualityReport
   );
   persistGateReport(repository, flowLayerResolvedGate, sessionId);
 
-  const domainFlowGate = checkDomainFlowConsistency(sessionId, [domainStage.artifactId, flowStage.artifactId], {
+  const domainFlowGate = checkDomainFlowConsistency(sessionId, [domainStage.artifactId, flowArtifactId], {
     domain: domainStage.output,
-    flows: flowStage.output,
+    flows: flowOutput,
     product: productFrameStage.output.product
   });
   persistGateReport(repository, domainFlowGate, sessionId);
@@ -922,7 +1221,7 @@ export async function generateBlueprintFromInput(
       product: productFrameStage.output.product,
       users: productFrameStage.output.users,
       domain: domainStage.output,
-      flows: flowStage.output
+      flows: flowOutput
     },
     schema: productBlueprintSchema.shape.ui,
     schemaName: "UIModel",
@@ -939,10 +1238,12 @@ export async function generateBlueprintFromInput(
         schemaName: "UIModel"
       }),
     artifactType: "ui_model",
-    inputArtifactIds: [domainStage.artifactId, flowStage.artifactId],
+    inputArtifactIds: [domainStage.artifactId, flowArtifactId],
     onStageEvent
   });
   repository.setSessionStatus(sessionId, "ui_generated");
+  let uiArtifactId = uiStage.artifactId;
+  let uiOutput = uiStage.output;
 
   let uiContractReviewReport = await runLayerQualityReview(
     repository,
@@ -951,13 +1252,13 @@ export async function generateBlueprintFromInput(
     sessionId,
     "ui_contract_review",
     "ui_layer",
-    uiStage.artifactId,
+    uiArtifactId,
     {
       product: productFrameStage.output.product,
       users: productFrameStage.output.users,
       domain: domainStage.output,
-      flows: flowStage.output,
-      ui: uiStage.output
+      flows: flowOutput,
+      ui: uiOutput
     },
     onStageEvent
   );
@@ -966,7 +1267,7 @@ export async function generateBlueprintFromInput(
     "flow_ui_coverage",
     { layer: "ui", kind: "light_review", sourceStage: "ui_contract_review" },
     sessionId,
-    [uiStage.artifactId],
+    [uiArtifactId],
     uiContractReviewReport
   );
   persistGateReport(repository, uiLayerInitialGate, sessionId);
@@ -976,8 +1277,8 @@ export async function generateBlueprintFromInput(
     product: productFrameStage.output.product,
     users: productFrameStage.output.users,
     domain: domainStage.output,
-    flows: flowStage.output,
-    ui: uiStage.output,
+    flows: flowOutput,
+    ui: uiOutput,
     visualPolicy: defaultVisualPolicy,
     generationPolicy: defaultGenerationPolicy,
     uncertainty: { assumptions: [], unresolvedQuestions: [], notableRisks: [] }
@@ -988,25 +1289,46 @@ export async function generateBlueprintFromInput(
     model,
     sessionId,
     "ui_layer",
-    uiStage.artifactId,
+    uiArtifactId,
     uiBlueprintSnapshot,
     uiContractReviewReport,
     uiLayerInitialGate,
-    maxQualityRepairAttempts
+    maxQualityRepairAttempts,
+    {
+      reviewStage: "ui_contract_review",
+      layerArtifactType: "ui_model",
+      layerSchema: uiModelSchema,
+      layerSchemaName: "UIModel",
+      extractLayerOutput: (resolvedBlueprint) => resolvedBlueprint.ui,
+      applyLayerOutput: (resolvedBlueprint, resolvedUi) => ({
+        ...resolvedBlueprint,
+        ui: resolvedUi
+      }),
+      createReviewPayload: (resolvedUi) => ({
+        product: productFrameStage.output.product,
+        users: productFrameStage.output.users,
+        domain: domainStage.output,
+        flows: flowOutput,
+        ui: resolvedUi
+      }),
+      onStageEvent
+    }
   );
   uiContractReviewReport = resolvedUiReview.report;
+  uiArtifactId = resolvedUiReview.layerArtifactId;
+  uiOutput = resolvedUiReview.layerOutput;
   const uiLayerResolvedGate = createLayerQualityGate(
     "flow_ui_coverage",
     { layer: "ui", kind: "light_review", sourceStage: "quality_repair" },
     sessionId,
-    [resolvedUiReview.blueprintArtifactId],
+    [uiArtifactId],
     uiContractReviewReport
   );
   persistGateReport(repository, uiLayerResolvedGate, sessionId);
 
-  const flowUiGate = checkFlowUiCoverage(sessionId, [flowStage.artifactId, uiStage.artifactId], {
-    flows: flowStage.output,
-    ui: uiStage.output
+  const flowUiGate = checkFlowUiCoverage(sessionId, [flowArtifactId, uiArtifactId], {
+    flows: flowOutput,
+    ui: uiOutput
   });
   persistGateReport(repository, flowUiGate, sessionId);
   if (!flowUiGate.passed) {
@@ -1032,8 +1354,8 @@ export async function generateBlueprintFromInput(
       product: productFrameStage.output.product,
       users: productFrameStage.output.users,
       domain: domainStage.output,
-      flows: flowStage.output,
-      ui: uiStage.output
+      flows: flowOutput,
+      ui: uiOutput
     },
     schema: policySchema,
     schemaName: "PolicyUncertaintyStageOutput",
@@ -1050,7 +1372,7 @@ export async function generateBlueprintFromInput(
         schemaName: "PolicyUncertaintyStageOutput"
       }),
     artifactType: "visual_policy",
-    inputArtifactIds: [productFrameStage.artifactId, domainStage.artifactId, flowStage.artifactId, uiStage.artifactId],
+    inputArtifactIds: [productFrameStage.artifactId, domainStage.artifactId, flowArtifactId, uiArtifactId],
     onStageEvent
   });
   repository.saveArtifact(sessionId, "generation_policy", policyStage.output.generationPolicy);
@@ -1063,8 +1385,8 @@ export async function generateBlueprintFromInput(
     product: productFrameStage.output.product,
     users: productFrameStage.output.users,
     domain: domainStage.output,
-    flows: flowStage.output,
-    ui: uiStage.output,
+    flows: flowOutput,
+    ui: uiOutput,
     visualPolicy: policyStage.output.visualPolicy,
     generationPolicy: policyStage.output.generationPolicy,
     uncertainty: policyStage.output.uncertainty
@@ -1092,7 +1414,7 @@ export async function generateBlueprintFromInput(
         schemaName: "ProductBlueprintV1"
       }),
     artifactType: "blueprint",
-    inputArtifactIds: [productFrameStage.artifactId, domainStage.artifactId, flowStage.artifactId, uiStage.artifactId],
+    inputArtifactIds: [productFrameStage.artifactId, domainStage.artifactId, flowArtifactId, uiArtifactId],
     onStageEvent
   });
 
@@ -1223,6 +1545,7 @@ export async function generateBlueprintFromInput(
 
     qualityAttempts += 1;
     repository.setSessionStatus(sessionId, "repair_routing");
+    const repairScope = makeRepairPlanPaths(semanticReport.issues);
     const repairPlan = makeRepairPlan(
       sessionId,
       blueprintVersion.id,
@@ -1234,7 +1557,8 @@ export async function generateBlueprintFromInput(
       maxQualityRepairAttempts,
       {
         sourceReportId: semanticReport.id
-      }
+      },
+      repairScope
     );
     persistRepairPlan(repository, repairPlan, sessionId);
 
@@ -1247,6 +1571,12 @@ export async function generateBlueprintFromInput(
       promptVersion: STAGE_PROMPT_VERSION,
       instructions: stageInstructions.quality_repair,
       payload: {
+        candidate: createQualityRepairCandidate(
+          locallyQualityRepaired,
+          repairPlan,
+          semanticReport.issues.map((item) => item.code),
+          "deterministic_quality_repair"
+        ),
         blueprintId: blueprintVersion.id,
         validatedBlueprint: locallyQualityRepaired,
         qualityReviewReport: semanticReport,
@@ -1278,8 +1608,28 @@ export async function generateBlueprintFromInput(
       onStageEvent
     });
 
-    activeBlueprint = qualityRepairStage.output;
-    blueprintArtifactId = qualityRepairStage.artifactId;
+    const candidate = createQualityRepairCandidate(
+      qualityRepairStage.output,
+      repairPlan,
+      semanticReport.issues.map((item) => item.code),
+      "llm_quality_repair"
+    );
+    const candidateArtifactId = persistQualityRepairCandidate(repository, candidate, sessionId);
+    const guardedArtifact = repository.saveArtifact(sessionId, "blueprint", locallyQualityRepaired);
+    const { guardedBlueprint, guardReport } = enforceQualityRepairInvariants({
+      sessionId,
+      blueprintId: blueprintVersion.id,
+      repairPlan,
+      locallyRepaired: locallyQualityRepaired,
+      candidate: candidate.blueprint,
+      candidateArtifactId,
+      guardedArtifactId: guardedArtifact.id
+    });
+    repairGuardReportSchema.parse(guardReport);
+    persistRepairGuardReport(repository, guardReport, sessionId);
+
+    activeBlueprint = guardedBlueprint;
+    blueprintArtifactId = guardedArtifact.id;
     blueprintVersion = repository.createBlueprintVersion(sessionId, blueprintArtifactId, "quality_repaired");
     repository.setSessionStatus(sessionId, "quality_repaired");
 

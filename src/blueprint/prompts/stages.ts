@@ -19,6 +19,7 @@ export const stageReasoningEffort: Record<BlueprintStage, "low" | "medium" | "hi
   repair_routing: "low",
   blueprint_repair: "medium",
   quality_repair: "medium",
+  post_repair_guard: "low",
   freeze: "low"
 };
 
@@ -38,6 +39,7 @@ export const stageMaxOutputTokens: Record<BlueprintStage, number> = {
   repair_routing: 2000,
   blueprint_repair: 12000,
   quality_repair: 12000,
+  post_repair_guard: 1000,
   freeze: 1000
 };
 
@@ -106,5 +108,6 @@ Do not change explicit user facts.
 Do not expand scope.
 Do not rerun unrelated design decisions.
 Return the full corrected ProductBlueprintV1 JSON.`,
+  post_repair_guard: `You are not asked to generate content in this stage.`,
   freeze: `You are not asked to generate content in this stage.`
 };

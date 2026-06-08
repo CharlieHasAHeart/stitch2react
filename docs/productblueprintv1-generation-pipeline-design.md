@@ -860,13 +860,203 @@ Output:
 
 ```ts
 {
-  blueprint: ProductBlueprintV1;
+  candidate: QualityRepairCandidate;
 }
 ```
 
-Quality repair must return the full corrected blueprint so it can be persisted as a new blueprint version and revalidated.
+Quality repair may return a full `ProductBlueprintV1` for persistence compatibility, but that returned blueprint is a **candidate**, not the active repaired blueprint.
 
-#### 7.6.3 Repair routing rules
+The candidate must pass deterministic post-LLM repair guard before it can be persisted as the guarded repaired blueprint and used by validation or downstream stages.
+
+#### 7.6.3 Post-LLM repair guard
+
+LLM-assisted quality repair output must not be trusted directly.
+
+The required quality repair flow is:
+
+```text
+quality review report
+  -> repair routing
+  -> repair plan
+  -> deterministic local quality repair
+  -> optional LLM quality repair candidate
+  -> post-LLM repair guard
+  -> persist guarded blueprint version
+  -> schema validation
+  -> deterministic semantic validation
+  -> quality review rerun
+  -> quality_revalidation gate
+  -> freeze only if eligible
+```
+
+Rules:
+
+1. The LLM quality repair output is a candidate, not the active blueprint.
+2. The pipeline must not assign the candidate directly to `activeBlueprint`.
+3. A deterministic guard must compare the pre-repair blueprint, local deterministic repair output, LLM candidate, repair plan, protected paths, and allowed mutation paths.
+4. The guard must reject or overwrite changes that revert deterministic local repair output.
+5. The guard must reject changes outside the allowed repair scope.
+6. The guard must protect explicit-source facts, ids, flow references, page references, and raw input.
+7. The guard must re-apply deterministic quality invariants when needed.
+8. The guard must produce and persist a `RepairGuardReport` whenever it modifies or rejects candidate changes.
+
+Protected paths include, at minimum:
+
+```text
+ui.appStructure.shell
+ui.responsivePolicy.mobileFirst
+ui.responsivePolicy.breakpoints
+generationPolicy.stitchGenerationRules.requirePrimaryActionInEveryPage
+input.raw
+all explicit-source fields
+all ids
+all flow references
+all page references
+```
+
+Recommended implementation shape:
+
+```ts
+const locallyRepaired = repairBlueprintQuality(activeBlueprint, qualityReviewReport);
+const candidate = await runQualityRepairStage(locallyRepaired, repairPlan);
+const { guardedBlueprint, guardReport } = enforceQualityRepairInvariants({
+  beforeRepair: activeBlueprint,
+  locallyRepaired,
+  candidate,
+  qualityReviewReport,
+  repairPlan
+});
+persistRepairGuardReport(guardReport);
+activeBlueprint = guardedBlueprint;
+```
+
+Incorrect implementation:
+
+```ts
+activeBlueprint = qualityRepairStage.output;
+```
+
+#### 7.6.4 Layer repair must feed forward
+
+Layer-level quality repair must not repair a temporary blueprint snapshot and then allow downstream stages to continue using the original defective layer artifact.
+
+A layer-level repair must choose one of these valid strategies:
+
+```text
+1. Produce, persist, version, and feed forward the repaired layer artifact.
+2. Block and regenerate the affected layer.
+3. Treat the review as advisory only and keep the gate blocked until the real layer artifact is fixed.
+```
+
+A repaired blueprint snapshot from a layer review is not sufficient unless the affected layer artifact is extracted, persisted, versioned, and used as the new downstream input.
+
+Required flow for layer repair:
+
+```text
+layer quality review
+  -> repair routing
+  -> deterministic/LLM repair candidate
+  -> post-repair guard
+  -> extract repaired layer artifact
+  -> persist new layer artifact version
+  -> rerun layer quality review
+  -> rerun layer gate
+  -> downstream stages consume repaired layer artifact
+```
+
+Examples:
+
+```text
+If flow_quality_review repairs FlowModel, downstream UI modeling must consume the repaired FlowModel.
+If ui_contract_review repairs UIModel, policy generation and blueprint assembly must consume the repaired UIModel.
+```
+
+Do not clear a layer gate while downstream stages still consume the original defective artifact.
+
+#### 7.6.5 Quality reports are immutable
+
+Quality reports are immutable evidence.
+
+Do not mutate, overwrite, or synthetically clear quality report issues after repair.
+
+Incorrect:
+
+```ts
+activeReport = {
+  ...activeReport,
+  passed: true,
+  issues: []
+};
+```
+
+Correct:
+
+```text
+1. Keep the original quality report unchanged.
+2. Persist the repair plan and repair candidate.
+3. Persist the guarded repaired artifact.
+4. Rerun the relevant quality review.
+5. Use the new quality review report to decide whether the gate passes.
+```
+
+Only a new quality review report may clear previous issues.
+
+#### 7.6.6 Page role classification for quality repair
+
+Do not classify a page as a result page from business nouns.
+
+Business nouns such as the following describe domain content, not page role:
+
+```text
+quote
+booking
+order
+request
+invoice
+report
+assessment
+application
+case
+record
+```
+
+Result-like page evidence includes:
+
+```text
+readonly = true
+confirmationOnly = true
+id/name/route contains result, success, confirmation, complete, or completed
+purpose explicitly says show/display result, confirmation, completed output, or final generated answer
+page has completionSignals and no input-submit primary action
+```
+
+Input/action page evidence includes:
+
+```text
+purpose says collect, enter, edit, request, create, submit, or configure input
+page has form/input/create/request/submit sections
+page has a primary submit/save/create action
+readonly = false
+confirmationOnly = false
+```
+
+When preserving explicit outcome semantics, repair input pages and result pages differently.
+
+Input page purpose:
+
+```text
+Collect the user's required input and submit it to generate the visible result.
+```
+
+Result page purpose:
+
+```text
+Show the immediate estimated result after submission.
+```
+
+A page id such as `quote_request_form_page` must not be treated as a result page merely because it contains `quote`.
+
+#### 7.6.7 Repair routing rules
 
 Repair must be routed by issue type.
 
@@ -904,12 +1094,14 @@ Recommended repair execution order:
 2. if validation fails -> code repair first, then bounded blueprint_repair if needed
 3. if deterministic validation passes -> run semantic quality review
 4. classify quality issues as no-op, warning, targeted_repairable, or non_repairable
-5. if targeted quality issues exist -> run quality_repair
-6. persist repaired blueprint as a new version
-7. rerun schema validation
-8. rerun deterministic semantic validation
-9. rerun quality review or affected-area semantic review
-10. freeze only when required gates pass
+5. if targeted quality issues exist -> run deterministic local quality repair
+6. if needed, run LLM-assisted quality repair and treat its output as a candidate
+7. run post-LLM repair guard and persist a RepairGuardReport
+8. persist the guarded repaired blueprint as a new version
+9. rerun schema validation
+10. rerun deterministic semantic validation
+11. rerun quality review or affected-area semantic review
+12. freeze only when required gates pass
 ```
 
 ### 7.7 Phase 6: Freeze
@@ -2407,11 +2599,14 @@ then revalidated with the existing schema, semantic, and quality validators.
 After quality repair:
 
 ```text
-1. persist repaired blueprint as a new blueprint version
-2. run schema validation
-3. run semantic validation
-4. run quality review
-5. freeze only if all required checks pass
+1. treat LLM output as a quality repair candidate
+2. run deterministic post-repair guard
+3. persist the guarded repaired blueprint as a new blueprint version
+4. persist RepairGuardReport when candidate changes are rejected, overwritten, or re-applied
+5. run schema validation
+6. run deterministic semantic validation
+7. rerun quality review
+8. freeze only if all required checks pass
 ```
 
 If quality repair introduces schema or semantic validation failures, route to the appropriate repair loop or fail after bounded attempts.

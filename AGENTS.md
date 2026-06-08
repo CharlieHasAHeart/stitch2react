@@ -264,6 +264,156 @@ manual_blocking_issue
 Do not use broad full-blueprint regeneration when a local targeted repair is sufficient.
 
 
+## Quality Repair Safety Rules
+
+Codex must treat LLM-assisted repair output as untrusted until deterministic guards pass.
+
+### 1. Never assign LLM quality repair output directly
+
+Incorrect:
+
+```ts
+activeBlueprint = qualityRepairStage.output;
+```
+
+Correct:
+
+```ts
+const locallyRepaired = repairBlueprintQuality(activeBlueprint, qualityReviewReport);
+const candidate = qualityRepairStage.output;
+const { guardedBlueprint, guardReport } = enforceQualityRepairInvariants({
+  beforeRepair: activeBlueprint,
+  locallyRepaired,
+  candidate,
+  qualityReviewReport,
+  repairPlan
+});
+persistRepairGuardReport(guardReport);
+activeBlueprint = guardedBlueprint;
+```
+
+The LLM output is a repair candidate, not the active blueprint.
+
+### 2. Deterministic local repair must be protected
+
+If deterministic local repair changes protected fields, later LLM repair must not revert those changes.
+
+Protected examples:
+
+```text
+ui.appStructure.shell
+ui.responsivePolicy.mobileFirst
+ui.responsivePolicy.breakpoints
+generationPolicy.stitchGenerationRules.requirePrimaryActionInEveryPage
+input.raw
+ids
+flow references
+page references
+explicit-source facts
+```
+
+If the LLM candidate reverts a protected field, the post-repair guard must either restore the deterministic value or reject the candidate.
+
+### 3. Layer repair must feed forward
+
+If a flow-layer or UI-layer quality repair changes a blueprint snapshot, Codex must do one of the following:
+
+```text
+1. Extract and persist the repaired layer artifact, then use it in downstream stages.
+2. Regenerate the affected layer.
+3. Keep the gate blocked.
+```
+
+Do not clear a gate while downstream stages still consume the original defective artifact.
+
+Examples:
+
+```text
+If flow_quality_review repairs FlowModel, ui_modeling must consume the repaired FlowModel.
+If ui_contract_review repairs UIModel, policy_uncertainty and blueprint_assembly must consume the repaired UIModel.
+```
+
+### 4. Quality reports are immutable
+
+Do not clear quality report issues manually after repair.
+
+Incorrect:
+
+```ts
+activeReport = {
+  ...activeReport,
+  passed: true,
+  issues: []
+};
+```
+
+Correct:
+
+```text
+original report remains unchanged
+repair plan is persisted
+repair candidate is persisted
+post-repair guard runs
+new quality review report is generated
+new report determines whether the gate passes
+```
+
+Only a new quality review report may clear previous issues.
+
+### 5. Page role classification must not use business nouns
+
+Do not classify result pages using business nouns such as:
+
+```text
+quote
+booking
+order
+request
+invoice
+report
+assessment
+application
+case
+record
+```
+
+Use page semantics instead:
+
+```text
+readonly
+confirmationOnly
+route/name/id role words such as result, success, confirmation, complete, completed
+purpose
+primary actions
+secondary actions
+completionSignals
+states
+```
+
+A page such as `quote_request_form_page` is an input page when it has form/input/submit behavior, even though it contains the word `quote`.
+
+For explicit outcome repair:
+
+```text
+input page purpose = collect required user input and submit it to generate the visible result
+result page purpose = show the immediate estimated result after submission
+```
+
+Do not give an input page the same purpose as a result page.
+
+### 6. Required regression tests
+
+When modifying quality repair, add deterministic tests for:
+
+```text
+quote_request_form_page is not classified as a result page
+LLM quality_repair cannot revert appStructure or responsivePolicy deterministic repairs
+layer repair output is used by downstream stages or the gate remains blocked
+quality reports are not synthetically cleared
+flow_quality_weak targeted repair strengthens validation steps and feedback
+ui_contract_ambiguous repair separates input page purpose from result page purpose
+```
+
 ## Responses API Usage
 
 Use independent Responses API calls per stage.
@@ -391,6 +541,28 @@ Persist at minimum:
    - schema validity
    - semantic validity
    - issues
+
+6. `quality_review_reports`
+   - quality review id
+   - session id
+   - blueprint id
+   - passed flag
+   - immutable issues
+
+7. `repair_plans`
+   - repair plan id
+   - source report or gate
+   - route
+   - affected paths
+   - allowed mutation paths
+   - protected paths
+
+8. `repair_guard_reports`
+   - guard report id
+   - candidate artifact id
+   - guarded artifact id
+   - rejected or reverted changes
+   - re-applied deterministic invariants
 
 ## Validation Requirements
 
@@ -929,6 +1101,12 @@ At minimum, add tests for:
 - visual policy forbids UI-as-image
 - repair fixes missing completion signal
 - repair does not change explicit constraints
+- quality repair does not directly trust LLM full-blueprint output
+- post-repair guard prevents LLM from reverting deterministic appStructure and responsivePolicy repairs
+- layer repair feeds repaired artifacts into downstream stages
+- quality reports are immutable and are not synthetically cleared
+- page role classification does not treat business nouns such as quote as result-page evidence
+- explicit outcome repair keeps input page and result page purposes distinct
 
 Use deterministic test fixtures.
 

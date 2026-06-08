@@ -9,6 +9,7 @@ import type {
   GenerationArtifact,
   GenerationSession,
   GenerationStageRun,
+  RepairGuardReport,
   RepairPlan,
   SessionStatus,
   ValidationReport
@@ -139,6 +140,11 @@ export class BlueprintRepository {
     return plan;
   }
 
+  saveRepairGuardReport(report: RepairGuardReport): RepairGuardReport {
+    this.store.saveRepairGuardReport(report);
+    return report;
+  }
+
   requireSession(sessionId: string): GenerationSession {
     const session = this.store.collections.sessions[sessionId];
     if (!session) {
@@ -195,6 +201,12 @@ export class BlueprintRepository {
 
   listRepairPlans(sessionId: string): RepairPlan[] {
     return Object.values(this.store.collections.repairPlans).filter(
+      (item) => item.sessionId === sessionId
+    );
+  }
+
+  listRepairGuardReports(sessionId: string): RepairGuardReport[] {
+    return Object.values(this.store.collections.repairGuardReports).filter(
       (item) => item.sessionId === sessionId
     );
   }

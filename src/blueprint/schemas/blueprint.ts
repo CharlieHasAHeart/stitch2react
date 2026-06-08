@@ -396,6 +396,7 @@ export const gateReportSchema = z.object({
         "repair_routing",
         "blueprint_repair",
         "quality_repair",
+        "post_repair_guard",
         "freeze"
       ])
       .optional()
@@ -504,6 +505,7 @@ export const repairPlanSchema = z.object({
           "repair_routing",
           "blueprint_repair",
           "quality_repair",
+          "post_repair_guard",
           "freeze"
         ])
         .optional()
@@ -511,8 +513,49 @@ export const repairPlanSchema = z.object({
     .optional(),
   sourceIssueCodes: z.array(z.string()),
   affectedPaths: z.array(z.string()),
+  allowedMutationPaths: z.array(z.string()),
+  protectedPaths: z.array(z.string()),
+  requiresPostRepairGuard: z.boolean(),
+  requiresReviewAfterRepair: z.boolean(),
   rationale: z.string(),
   maxAttempts: z.number().int().positive(),
+  createdAt: z.string()
+});
+
+export const qualityRepairCandidateSchema = z.object({
+  blueprint: productBlueprintSchema,
+  source: z.enum(["llm_quality_repair", "deterministic_quality_repair"]),
+  repairPlanId: z.string(),
+  targetIssueCodes: z.array(z.string()),
+  createdAt: z.string()
+});
+
+export const repairGuardChangeSchema = z.object({
+  path: z.string(),
+  candidateValue: z.unknown(),
+  guardedValue: z.unknown(),
+  reason: z.enum([
+    "protected_field_reverted",
+    "outside_allowed_repair_scope",
+    "explicit_fact_changed",
+    "id_or_reference_changed",
+    "deterministic_invariant_reapplied"
+  ])
+});
+
+export const repairGuardReportSchema = z.object({
+  id: z.string(),
+  sessionId: z.string(),
+  blueprintId: z.string(),
+  repairPlanId: z.string(),
+  candidateArtifactId: z.string(),
+  guardedArtifactId: z.string(),
+  protectedFields: z.array(z.string()),
+  allowedMutationPaths: z.array(z.string()),
+  revertedChanges: z.array(repairGuardChangeSchema),
+  rejectedChanges: z.array(repairGuardChangeSchema),
+  reappliedInvariants: z.array(z.string()),
+  passed: z.boolean(),
   createdAt: z.string()
 });
 

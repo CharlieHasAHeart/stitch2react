@@ -399,6 +399,7 @@ export type BlueprintStage =
   | "repair_routing"
   | "blueprint_repair"
   | "quality_repair"
+  | "post_repair_guard"
   | "freeze";
 
 export type SessionStatus =
@@ -439,7 +440,9 @@ export type ArtifactType =
   | "blueprint"
   | "validation_report"
   | "quality_review_report"
-  | "repair_plan";
+  | "repair_plan"
+  | "repair_guard_report"
+  | "quality_repair_candidate";
 
 export type BlueprintVersionStatus =
   | "draft"
@@ -599,6 +602,10 @@ export type RepairPlan = {
   sourceGateContext?: GateContext;
   sourceIssueCodes: string[];
   affectedPaths: string[];
+  allowedMutationPaths: string[];
+  protectedPaths: string[];
+  requiresPostRepairGuard: boolean;
+  requiresReviewAfterRepair: boolean;
   rationale: string;
   maxAttempts: number;
   createdAt: string;
@@ -614,6 +621,60 @@ export type FreezeEligibility = {
   unresolvedHighMisleadingIssues: BlueprintQualityIssue[];
   canFreeze: boolean;
   rationale: string;
+};
+
+export type QualityRepairCandidate = {
+  blueprint: ProductBlueprintV1;
+  source: "llm_quality_repair" | "deterministic_quality_repair";
+  repairPlanId: string;
+  targetIssueCodes: string[];
+  createdAt: string;
+};
+
+export type RepairGuardChangeReason =
+  | "protected_field_reverted"
+  | "outside_allowed_repair_scope"
+  | "explicit_fact_changed"
+  | "id_or_reference_changed"
+  | "deterministic_invariant_reapplied";
+
+export type RepairGuardChange = {
+  path: string;
+  candidateValue: unknown;
+  guardedValue: unknown;
+  reason: RepairGuardChangeReason;
+};
+
+export type RepairGuardReport = {
+  id: string;
+  sessionId: string;
+  blueprintId: string;
+  repairPlanId: string;
+  candidateArtifactId: string;
+  guardedArtifactId: string;
+  protectedFields: string[];
+  allowedMutationPaths: string[];
+  revertedChanges: RepairGuardChange[];
+  rejectedChanges: RepairGuardChange[];
+  reappliedInvariants: string[];
+  passed: boolean;
+  createdAt: string;
+};
+
+export type PageRole =
+  | "input"
+  | "result"
+  | "confirmation"
+  | "readonly_detail"
+  | "dashboard"
+  | "supporting"
+  | "unknown";
+
+export type PageRoleClassification = {
+  pageId: string;
+  role: PageRole;
+  evidence: string[];
+  confidence: Confidence;
 };
 
 export type QualityIssue = BlueprintQualityIssue;
