@@ -1621,13 +1621,62 @@ export async function generateBlueprintFromInput(
     semanticReport = reviewBlueprintQuality(sessionId, blueprintVersion.id, activeBlueprint);
     qualityReviewReportId = persistQualityReview(repository, semanticReport, sessionId);
     repository.updateBlueprintVersion(blueprintVersion.id, { qualityReviewReportId });
+    let deterministicQualityAttempts = 0;
+    while (semanticReport.issues.some((issue) => issue.severity === "blocker" || issue.severity === "high")) {
+      const route = routeQualityIssues(semanticReport.issues);
+      if (route === "no_repair_needed" || route === "manual_blocking_issue") {
+        failSession(repository, sessionId, `${describeQualityFailure(semanticReport)}; deterministic default pipeline does not use LLM quality repair.`);
+      }
+      if (deterministicQualityAttempts >= maxQualityRepairAttempts) {
+        failSession(
+          repository,
+          sessionId,
+          `${describeQualityFailure(semanticReport)}; deterministic quality repair attempts exhausted after ${deterministicQualityAttempts} attempts.`
+        );
+      }
 
-    if (semanticReport.issues.some((issue) => issue.severity === "blocker" || issue.severity === "high")) {
-      failSession(
-        repository,
+      deterministicQualityAttempts += 1;
+      repository.setSessionStatus(sessionId, "repair_routing");
+      const repairScope = makeRepairPlanPaths(semanticReport.issues);
+      const repairPlan = makeRepairPlan(
         sessionId,
-        `${describeQualityFailure(semanticReport)}; deterministic default pipeline does not use LLM quality repair.`
+        blueprintVersion.id,
+        route,
+        "quality_review_report",
+        semanticReport.issues.map((item) => item.code),
+        semanticReport.issues.flatMap((item) => item.affectedPaths ?? [item.path]),
+        "Default deterministic quality review found code-verifiable targeted issues requiring local quality repair.",
+        maxQualityRepairAttempts,
+        {
+          sourceReportId: semanticReport.id
+        },
+        repairScope
       );
+      persistRepairPlan(repository, repairPlan, sessionId);
+
+      repository.setSessionStatus(sessionId, "quality_repairing");
+      activeBlueprint = repairBlueprintQuality(activeBlueprint, semanticReport);
+      const repairedArtifact = repository.saveArtifact(sessionId, "blueprint", activeBlueprint);
+      blueprintArtifactId = repairedArtifact.id;
+      blueprintVersion = repository.createBlueprintVersion(sessionId, blueprintArtifactId, "quality_repaired");
+      repository.setSessionStatus(sessionId, "quality_repaired");
+
+      repository.setSessionStatus(sessionId, "validating");
+      validationReport = validateBlueprint(sessionId, blueprintVersion.id, activeBlueprint);
+      validationReportId = persistValidationReport(repository, validationReport, sessionId);
+      repository.updateBlueprintVersion(blueprintVersion.id, { validationReportId });
+      if (hasValidationFailure(validationReport)) {
+        failSession(
+          repository,
+          sessionId,
+          `${describeValidationFailure(validationReport)}; deterministic quality repair introduced validation failure.`
+        );
+      }
+
+      repository.setSessionStatus(sessionId, "quality_reviewing");
+      semanticReport = reviewBlueprintQuality(sessionId, blueprintVersion.id, activeBlueprint);
+      qualityReviewReportId = persistQualityReview(repository, semanticReport, sessionId);
+      repository.updateBlueprintVersion(blueprintVersion.id, { qualityReviewReportId });
     }
   } else {
     let qualityAttempts = 0;
