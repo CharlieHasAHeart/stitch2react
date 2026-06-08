@@ -113,6 +113,67 @@ function makeResultPageAction(pageId: string) {
   };
 }
 
+function repairUiContractAmbiguity(repaired: ProductBlueprintV1): void {
+  const formPage = repaired.ui.pages.find((page) => !page.readonly && !page.confirmationOnly);
+  const resultPage = repaired.ui.pages.find((page) => page.readonly || /result/i.test(page.id));
+
+  if (formPage?.primaryAction) {
+    formPage.primaryAction.targetPageId = resultPage?.id ?? formPage.primaryAction.targetPageId;
+    formPage.primaryAction.feedback =
+      "提交成功后进入当前申请对应的结果页；若校验失败或提交失败，则停留在当前页并显示明确反馈，允许用户修正或重试。";
+  }
+
+  if (resultPage) {
+    if (resultPage.route === "/result") {
+      resultPage.route = "/result/:resultToken";
+    }
+
+    resultPage.purpose =
+      "Show the visible result for the current submission, or a structured fallback state when the result token is missing or the result cannot be loaded.";
+
+    const hasRetryCurrentResult = resultPage.secondaryActions.some((action) => /重试|retry/i.test(action.label));
+    if (!hasRetryCurrentResult) {
+      resultPage.secondaryActions.push({
+        id: `${resultPage.id}_retry_current_result`,
+        label: "重试加载当前结果",
+        kind: "secondary",
+        triggersFlowId: "recovery_result_page_missing_or_load_failed",
+        feedback: "在结果加载失败时重试获取当前 resultToken 对应的结果。"
+      });
+    }
+
+    const hasReturnToForm = resultPage.secondaryActions.some((action) => action.targetPageId === formPage?.id);
+    if (!hasReturnToForm && formPage) {
+      resultPage.secondaryActions.push({
+        id: `${resultPage.id}_return_to_form`,
+        label: "返回报价申请页",
+        kind: "secondary",
+        targetPageId: formPage.id,
+        feedback: "当当前结果无法展示时，返回报价申请页重新发起申请。"
+      });
+    }
+
+    if (!resultPage.supportsFlowIds.includes("recovery_result_page_missing_or_load_failed")) {
+      resultPage.supportsFlowIds.push("recovery_result_page_missing_or_load_failed");
+    }
+
+    if (!repaired.flows.recoveryFlows.some((flow) => flow.id === "recovery_result_page_missing_or_load_failed")) {
+      repaired.flows.recoveryFlows.push({
+        id: "recovery_result_page_missing_or_load_failed",
+        name: "结果页缺少上下文或加载失败时恢复",
+        sourceFlowId: repaired.flows.coreUserFlows[0]?.id ?? "core_flow",
+        failureCondition:
+          "结果页缺少有效 resultToken，或存在 resultToken 但当前提交对应的结果加载失败。",
+        recoveryActions: [
+          "若缺少或无效 resultToken，则提示当前没有可展示的结果，并允许返回报价申请页重新发起申请。",
+          "若存在 resultToken 但结果加载失败，则允许重试加载当前结果。",
+          "在任一异常态下，都提供返回报价申请页的明确入口。"
+        ]
+      });
+    }
+  }
+}
+
 function classifyPageRole(page: PageContract): PageRoleClassification {
   const haystack = [page.id, page.name, page.route, page.purpose].join(" ").toLowerCase();
   const evidence: string[] = [];
@@ -228,6 +289,7 @@ export function repairBlueprintQuality(
         break;
       }
       case "missing_result_page_action": {
+        repairUiContractAmbiguity(repaired);
         for (const page of repaired.ui.pages) {
           const isResultLike = page.readonly || page.confirmationOnly;
           if (isResultLike && page.secondaryActions.length === 0) {
@@ -304,6 +366,7 @@ export function repairBlueprintQuality(
         break;
       }
       case "ui_contract_ambiguous": {
+        repairUiContractAmbiguity(repaired);
         for (const page of repaired.ui.pages) {
           const pageRole = classifyPageRole(page);
           if (pageRole.role === "input") {

@@ -249,6 +249,52 @@ function makeRepairPlanPaths(issues: BlueprintQualityIssue[]): { allowedMutation
   };
 }
 
+function narrowLayerRepairPaths(
+  reviewStage: LayerReviewStage,
+  issues: BlueprintQualityIssue[],
+  repairScope: { allowedMutationPaths: string[]; protectedPaths: string[] }
+): { allowedMutationPaths: string[]; protectedPaths: string[] } {
+  if (reviewStage === "flow_quality_review") {
+    const allowed = repairScope.allowedMutationPaths.filter((path) =>
+      path.startsWith("/flows") ||
+      path.startsWith("flows") ||
+      path.startsWith("/product") ||
+      path.startsWith("product") ||
+      path.startsWith("/domain/businessRules") ||
+      path.startsWith("domain.businessRules") ||
+      path.startsWith("/domain/entities") ||
+      path.startsWith("domain.entities")
+    );
+    return {
+      allowedMutationPaths: allowed.length > 0 ? allowed : repairScope.allowedMutationPaths,
+      protectedPaths: repairScope.protectedPaths
+    };
+  }
+
+  const uiAllowed = repairScope.allowedMutationPaths.filter((path) =>
+    path.startsWith("/ui") ||
+    path.startsWith("ui") ||
+    path.startsWith("/flows/recoveryFlows") ||
+    path.startsWith("flows.recoveryFlows") ||
+    path.startsWith("/flows/feedbackFlows") ||
+    path.startsWith("flows.feedbackFlows")
+  );
+
+  const mustKeep = issues.flatMap((issue) => issue.affectedPaths ?? [issue.path]).filter((path) =>
+    path.startsWith("/ui") ||
+    path.startsWith("ui") ||
+    path.startsWith("/flows/recoveryFlows") ||
+    path.startsWith("flows.recoveryFlows") ||
+    path.startsWith("/flows/feedbackFlows") ||
+    path.startsWith("flows.feedbackFlows")
+  );
+
+  return {
+    allowedMutationPaths: Array.from(new Set([...(uiAllowed.length > 0 ? uiAllowed : repairScope.allowedMutationPaths), ...mustKeep])),
+    protectedPaths: repairScope.protectedPaths
+  };
+}
+
 function makeLayerRepairAcceptanceCriteria(
   reviewStage: LayerReviewStage,
   issues: BlueprintQualityIssue[]
@@ -656,7 +702,11 @@ async function resolveLayerQualityBlockers<TLayerOutput, TSchema extends z.ZodTy
 
     attempts += 1;
     repository.setSessionStatus(sessionId, "repair_routing");
-    const repairScope = makeRepairPlanPaths(activeReport.issues);
+    const repairScope = narrowLayerRepairPaths(
+      config.reviewStage,
+      activeReport.issues,
+      makeRepairPlanPaths(activeReport.issues)
+    );
     const repairPlan = makeRepairPlan(
       sessionId,
       blueprintVersionId,
