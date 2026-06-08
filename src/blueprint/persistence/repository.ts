@@ -3,6 +3,7 @@ import { createId } from "../shared/ids.js";
 import type {
   ArtifactType,
   BlueprintQualityReport,
+  ProductBlueprintV1,
   BlueprintVersion,
   BlueprintVersionStatus,
   GateReport,
@@ -15,6 +16,7 @@ import type {
   ValidationReport
 } from "../types/blueprint.js";
 import { FileBlueprintStore } from "./file-store.js";
+import type { ProjectBundleManifest } from "./file-store.js";
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -63,6 +65,22 @@ export class BlueprintRepository {
     };
     this.store.saveArtifactRecord(artifact);
     return artifact;
+  }
+
+  savePageHtmlFile(sessionId: string, pageId: string, html: string): string {
+    return this.store.savePageHtmlFile(sessionId, pageId, html);
+  }
+
+  saveProjectBundleFile(projectId: string, relativePath: string, value: unknown): string {
+    return this.store.saveProjectBundleFile(projectId, relativePath, value);
+  }
+
+  saveProjectBundleTextFile(projectId: string, relativePath: string, value: string): string {
+    return this.store.saveProjectBundleTextFile(projectId, relativePath, value);
+  }
+
+  saveProjectBundleManifest(projectId: string, manifest: ProjectBundleManifest): string {
+    return this.store.saveProjectBundleManifest(projectId, manifest);
   }
 
   createStageRun(stageRun: GenerationStageRun): GenerationStageRun {
@@ -175,6 +193,24 @@ export class BlueprintRepository {
       throw new Error(`Unknown blueprint version: ${blueprintId}`);
     }
     return version;
+  }
+
+  requireBlueprintJson(blueprintId: string): ProductBlueprintV1 {
+    const version = this.requireBlueprintVersion(blueprintId);
+    return this.requireArtifact(version.artifactId).json as ProductBlueprintV1;
+  }
+
+  requireLatestFrozenBlueprint(): { session: GenerationSession; version: BlueprintVersion; blueprint: ProductBlueprintV1 } {
+    const frozenVersions = Object.values(this.store.collections.blueprintVersions)
+      .filter((version) => version.status === "frozen")
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    const version = frozenVersions.at(-1);
+    if (!version) {
+      throw new Error("No frozen blueprint found.");
+    }
+    const session = this.requireSession(version.sessionId);
+    const blueprint = this.requireArtifact(version.artifactId).json as ProductBlueprintV1;
+    return { session, version, blueprint };
   }
 
   listStageRuns(sessionId: string): GenerationStageRun[] {

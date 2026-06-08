@@ -422,6 +422,10 @@ export type SessionStatus =
   | "quality_repairing"
   | "quality_repaired"
   | "blueprint_frozen"
+  | "stitch_prompt_planning"
+  | "stitch_generating"
+  | "stitch_validating"
+  | "stitch_completed"
   | "failed";
 
 export type ArtifactType =
@@ -442,7 +446,13 @@ export type ArtifactType =
   | "quality_review_report"
   | "repair_plan"
   | "repair_guard_report"
-  | "quality_repair_candidate";
+  | "quality_repair_candidate"
+  | "stitch_prompt_plan"
+  | "stitch_page_prompt"
+  | "stitch_html"
+  | "stitch_screenshot"
+  | "stitch_html_validation_report"
+  | "stitch_page_generation_report";
 
 export type BlueprintVersionStatus =
   | "draft"
@@ -621,6 +631,102 @@ export type FreezeEligibility = {
   unresolvedHighMisleadingIssues: BlueprintQualityIssue[];
   canFreeze: boolean;
   rationale: string;
+};
+
+export type StitchPromptPlanPageRole =
+  | "input"
+  | "result"
+  | "confirmation"
+  | "readonly_detail"
+  | "dashboard"
+  | "supporting"
+  | "unknown";
+
+export type StitchPromptPlanPage = {
+  pageId: string;
+  pageName: string;
+  pageRole: StitchPromptPlanPageRole;
+  supportedFlowIds: string[];
+  requiredDomainEntityIds: string[];
+  requiredActions: string[];
+  requiredStates: string[];
+  requiredFeedbackSurfaces: string[];
+  requiredRecoverySurfaces: string[];
+};
+
+export type StitchPromptPlan = {
+  sessionId: string;
+  blueprintId: string;
+  pages: StitchPromptPlanPage[];
+};
+
+export type StitchPagePromptArtifact = {
+  sessionId: string;
+  blueprintId: string;
+  pageId: string;
+  prompt: string;
+  sourcePageContractId: string;
+  sourceFlowIds: string[];
+  createdAt: string;
+};
+
+export type StitchHtmlValidationIssueSeverity = "error" | "warning";
+
+export type StitchHtmlValidationIssue = {
+  severity: StitchHtmlValidationIssueSeverity;
+  code: string;
+  message: string;
+  path?: string;
+  suggestedFix?: string;
+};
+
+export type StitchHtmlValidationReport = {
+  id: string;
+  sessionId: string;
+  blueprintId: string;
+  pageId: string;
+  htmlArtifactId?: string;
+  passed: boolean;
+  issues: StitchHtmlValidationIssue[];
+  createdAt: string;
+};
+
+export type StitchPageGenerationReport = {
+  id: string;
+  sessionId: string;
+  blueprintId: string;
+  pageId: string;
+  promptArtifactId: string;
+  htmlArtifactId?: string;
+  screenshotArtifactId?: string;
+  validationReportId: string;
+  status: "generated" | "validated" | "failed";
+  createdAt: string;
+};
+
+export type StitchPageGenerationResult = {
+  sessionId: string;
+  blueprintId: string;
+  pageId: string;
+  promptArtifactId: string;
+  htmlArtifactId?: string;
+  screenshotArtifactId?: string;
+  validationReportId: string;
+  status: "generated" | "validated" | "failed";
+};
+
+export type StitchGenerationInput = {
+  sessionId: string;
+  blueprintId: string;
+  frozenBlueprint: ProductBlueprintV1;
+  targetPages?: string[];
+};
+
+export type StitchPipelineResult = {
+  sessionId: string;
+  blueprintId: string;
+  promptPlanArtifactId: string;
+  pageResults: StitchPageGenerationResult[];
 };
 
 export type QualityRepairCandidate = {

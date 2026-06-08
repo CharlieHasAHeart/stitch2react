@@ -1843,6 +1843,42 @@ artifact versioning
 
 ---
 
+
+## Downstream Handoff: Stitch HTML Generation
+
+After `ProductBlueprintV1` is frozen, the next pipeline is governed by:
+
+```text
+docs/stitch-html-generation-pipeline-design.md
+```
+
+The blueprint pipeline ends at freeze.
+
+The Stitch pipeline begins with:
+
+```text
+frozen ProductBlueprintV1
+  -> Stitch prompt plan
+  -> page-level Stitch prompts
+  -> Stitch HTML artifacts
+  -> HTML validation
+  -> screenshots
+  -> React handoff
+```
+
+Rules:
+
+```text
+Stitch must consume the frozen blueprint only.
+Stitch must not reinterpret raw user input.
+Stitch generation is page-by-page by default.
+Each Stitch prompt must be derived from a PageContract.
+Generated HTML must use real editable HTML elements.
+UI-as-image is forbidden for primary UI.
+```
+
+---
+
 ## 17. Final Architectural Summary
 
 The system should be implemented as:

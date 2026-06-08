@@ -23,6 +23,7 @@ import type {
   BlueprintMeta,
   BlueprintQualityIssue,
   BlueprintQualityReport,
+  BlueprintVersion,
   FreezeEligibility,
   GateIssue,
   GateReport,
@@ -36,6 +37,7 @@ import type {
   ValidationReport
 } from "../types/blueprint.js";
 import { createId } from "../shared/ids.js";
+import { readOpenAIEnv } from "../shared/env.js";
 import { validateBlueprint } from "../validation/validate-blueprint.js";
 import type { z } from "zod";
 
@@ -70,6 +72,27 @@ function useExperimentalLlmRepair(options: GenerateBlueprintOptions): boolean {
 
 function nowIso(): string {
   return new Date().toISOString();
+}
+
+function exportFrozenProjectBundle(
+  repository: BlueprintRepository,
+  sessionId: string,
+  blueprintVersion: BlueprintVersion,
+  blueprint: ProductBlueprintV1
+): void {
+  const projectId = blueprintVersion.id;
+  const blueprintJsonPath = repository.saveProjectBundleFile(projectId, "blueprint/frozen-blueprint.json", blueprint);
+  repository.saveProjectBundleManifest(projectId, {
+    projectId,
+    sessionId,
+    blueprintId: blueprintVersion.id,
+    blueprintArtifactId: blueprintVersion.artifactId,
+    blueprintVersion: blueprintVersion.version,
+    status: "blueprint_frozen",
+    blueprintJsonPath,
+    pages: [],
+    updatedAt: nowIso()
+  });
 }
 
 function metaForInput(rawInput: string): BlueprintMeta {
@@ -1031,7 +1054,7 @@ export async function generateBlueprintFromInput(
   const repository =
     options.repository ?? new BlueprintRepository(new FileBlueprintStore(options.artifactsRoot));
   const stageClient = options.stageClient ?? new OpenAIResponsesStageClient();
-  const model = options.model ?? process.env.OPENAI_MODEL ?? "gpt-5.4";
+  const model = options.model ?? readOpenAIEnv().OPENAI_MODEL;
   const maxRepairAttempts = options.maxRepairAttempts ?? 2;
   const maxQualityRepairAttempts = options.maxQualityRepairAttempts ?? 2;
   const experimentalLlmReview = useExperimentalLlmReview(options);
@@ -1835,6 +1858,7 @@ export async function generateBlueprintFromInput(
   });
   repository.setSessionStatus(sessionId, "blueprint_frozen");
   repository.updateSession(sessionId, { activeBlueprintId: blueprintVersion.id });
+  exportFrozenProjectBundle(repository, sessionId, blueprintVersion, activeBlueprint);
 
   return {
     sessionId,

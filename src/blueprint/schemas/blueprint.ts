@@ -248,6 +248,8 @@ const pageContractSchema = z.object({
   confirmationOnly: z.boolean()
 });
 
+export const pageContractSchemaExport = pageContractSchema;
+
 export const uiModelSchema = z.object({
   appStructure: z.object({
     shell: z.enum(["single_page", "dashboard", "wizard"]),
@@ -569,4 +571,64 @@ export const freezeEligibilitySchema = z.object({
   unresolvedHighMisleadingIssues: z.array(blueprintQualityIssueSchema),
   canFreeze: z.boolean(),
   rationale: z.string()
+});
+
+export const stitchPromptPlanPageSchema = z.object({
+  pageId: z.string(),
+  pageName: z.string(),
+  pageRole: z.enum(["input", "result", "confirmation", "readonly_detail", "dashboard", "supporting", "unknown"]),
+  supportedFlowIds: z.array(z.string()),
+  requiredDomainEntityIds: z.array(z.string()),
+  requiredActions: z.array(z.string()),
+  requiredStates: z.array(z.string()),
+  requiredFeedbackSurfaces: z.array(z.string()),
+  requiredRecoverySurfaces: z.array(z.string())
+});
+
+export const stitchPromptPlanSchema = z.object({
+  sessionId: z.string(),
+  blueprintId: z.string(),
+  pages: z.array(stitchPromptPlanPageSchema)
+});
+
+export const stitchPagePromptArtifactSchema = z.object({
+  sessionId: z.string(),
+  blueprintId: z.string(),
+  pageId: z.string(),
+  prompt: z.string(),
+  sourcePageContractId: z.string(),
+  sourceFlowIds: z.array(z.string()),
+  createdAt: z.string()
+});
+
+export const stitchHtmlValidationIssueSchema = z.object({
+  severity: z.enum(["error", "warning"]),
+  code: z.string(),
+  message: z.string(),
+  path: z.string().optional(),
+  suggestedFix: z.string().optional()
+});
+
+export const stitchHtmlValidationReportSchema = z.object({
+  id: z.string(),
+  sessionId: z.string(),
+  blueprintId: z.string(),
+  pageId: z.string(),
+  htmlArtifactId: z.string().optional(),
+  passed: z.boolean(),
+  issues: z.array(stitchHtmlValidationIssueSchema),
+  createdAt: z.string()
+});
+
+export const stitchPageGenerationReportSchema = z.object({
+  id: z.string(),
+  sessionId: z.string(),
+  blueprintId: z.string(),
+  pageId: z.string(),
+  promptArtifactId: z.string(),
+  htmlArtifactId: z.string().optional(),
+  screenshotArtifactId: z.string().optional(),
+  validationReportId: z.string(),
+  status: z.enum(["generated", "validated", "failed"]),
+  createdAt: z.string()
 });

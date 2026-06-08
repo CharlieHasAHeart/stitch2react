@@ -1101,6 +1101,109 @@ failed
 A quality blocker should move the session to `quality_repairing` when it is targeted-repairable, not directly to `failed`.
 
 
+
+## Stitch Generation Rules
+
+Stitch generation starts only after a `ProductBlueprintV1` is frozen.
+
+### 1. Frozen blueprint only
+
+Correct:
+
+```text
+frozen ProductBlueprintV1 -> PageContract -> Stitch prompt -> Stitch HTML
+```
+
+Incorrect:
+
+```text
+raw input -> Stitch prompt
+draft blueprint -> Stitch prompt
+```
+
+Do not let Stitch reinterpret raw input.
+
+### 2. Page-by-page generation
+
+Default Stitch generation must be page-level.
+
+```text
+one PageContract -> one Stitch prompt -> one Stitch HTML artifact
+```
+
+Do not generate the full application in one Stitch prompt unless an explicit future mode introduces that behavior.
+
+### 3. Prompt source
+
+Every Stitch prompt must be derived from:
+
+```text
+ProductBlueprintV1.product
+ProductBlueprintV1.users
+ProductBlueprintV1.domain
+ProductBlueprintV1.flows
+ProductBlueprintV1.ui.pages[n]
+ProductBlueprintV1.visualPolicy
+ProductBlueprintV1.generationPolicy
+```
+
+Each prompt must include:
+
+```text
+product context
+page purpose
+page role
+supported flow ids
+primary action
+secondary actions
+required components
+states
+feedback surfaces
+recovery surfaces
+completion signals
+visual policy
+instruction to avoid UI-as-image
+```
+
+### 4. Real HTML requirement
+
+Stitch HTML must use real HTML elements.
+
+Do not embed navigation, forms, tables, cards, buttons, charts, or important text inside raster images.
+
+### 5. Artifact persistence
+
+Persist at minimum:
+
+```text
+stitch_prompt_plan
+stitch_page_prompt
+stitch_html
+stitch_screenshot, when available
+stitch_html_validation_report
+```
+
+### 6. Validation and regeneration
+
+Run deterministic HTML validation after generation.
+
+If validation fails, regenerate the page from the same frozen `PageContract` using a stricter prompt.
+
+Do not patch the existing HTML through LLM repair in the default path.
+
+### 7. React handoff
+
+React generation must consume:
+
+```text
+frozen ProductBlueprintV1
+validated Stitch HTML
+optional Stitch screenshot
+Stitch validation report
+```
+
+React generation must not reinterpret raw input.
+
 ## Downstream Consumption Rules
 
 ### Stitch generation

@@ -24,6 +24,28 @@ export type FileStoreCollections = {
   repairGuardReports: Record<string, RepairGuardReport>;
 };
 
+export type ProjectBundleManifest = {
+  projectId: string;
+  sessionId: string;
+  blueprintId: string;
+  blueprintArtifactId: string;
+  blueprintVersion: number;
+  status: "blueprint_frozen" | "stitch_completed";
+  blueprintJsonPath: string;
+  stitchPromptPlanPath?: string;
+  pages: Array<{
+    pageId: string;
+    promptArtifactPath?: string;
+    htmlArtifactPath?: string;
+    htmlFilePath?: string;
+    screenshotArtifactPath?: string;
+    validationArtifactPath?: string;
+    generationReportPath?: string;
+    status?: string;
+  }>;
+  updatedAt: string;
+};
+
 function ensureDir(path: string): void {
   mkdirSync(path, { recursive: true });
 }
@@ -31,6 +53,11 @@ function ensureDir(path: string): void {
 function writeJson(path: string, value: unknown): void {
   ensureDir(dirname(path));
   writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+}
+
+function writeText(path: string, value: string): void {
+  ensureDir(dirname(path));
+  writeFileSync(path, value, "utf8");
 }
 
 function readJson<T>(path: string, fallback: T): T {
@@ -52,6 +79,7 @@ export class FileBlueprintStore {
   readonly repairPlansDir: string;
   readonly repairGuardReportsDir: string;
   readonly indexesDir: string;
+  readonly projectsDir: string;
 
   collections: FileStoreCollections;
 
@@ -67,6 +95,7 @@ export class FileBlueprintStore {
     this.repairPlansDir = join(rootDir, "repair_plans");
     this.repairGuardReportsDir = join(rootDir, "repair_guard_reports");
     this.indexesDir = join(rootDir, "indexes");
+    this.projectsDir = join(rootDir, "projects");
 
     ensureDir(this.sessionsDir);
     ensureDir(this.stageRunsDir);
@@ -78,6 +107,7 @@ export class FileBlueprintStore {
     ensureDir(this.repairPlansDir);
     ensureDir(this.repairGuardReportsDir);
     ensureDir(this.indexesDir);
+    ensureDir(this.projectsDir);
 
     this.collections = {
       sessions: readJson(join(this.indexesDir, "sessions.json"), {}),
@@ -163,5 +193,29 @@ export class FileBlueprintStore {
     this.collections.repairGuardReports[report.id] = report;
     writeJson(join(this.repairGuardReportsDir, `${report.id}.json`), report);
     writeJson(join(this.indexesDir, "repair-guard-reports.json"), this.collections.repairGuardReports);
+  }
+
+  savePageHtmlFile(sessionId: string, pageId: string, html: string): string {
+    const exportPath = join(this.artifactsDir, sessionId, "stitch_html_files", `${pageId}.html`);
+    writeText(exportPath, html);
+    return exportPath;
+  }
+
+  saveProjectBundleFile(projectId: string, relativePath: string, value: unknown): string {
+    const exportPath = join(this.projectsDir, projectId, relativePath);
+    writeJson(exportPath, value);
+    return exportPath;
+  }
+
+  saveProjectBundleTextFile(projectId: string, relativePath: string, value: string): string {
+    const exportPath = join(this.projectsDir, projectId, relativePath);
+    writeText(exportPath, value);
+    return exportPath;
+  }
+
+  saveProjectBundleManifest(projectId: string, manifest: ProjectBundleManifest): string {
+    const exportPath = join(this.projectsDir, projectId, "manifest.json");
+    writeJson(exportPath, manifest);
+    return exportPath;
   }
 }
