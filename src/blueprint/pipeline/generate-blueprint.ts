@@ -1231,6 +1231,7 @@ export async function generateBlueprintFromInput(
       flows: flowOutput,
       ui: {
         appStructure: { shell: "single_page", pageOrder: [] },
+        appArchetype: "single_page_tool",
         navigation: { type: "minimal", globalNavItems: [] },
         pages: [],
         globalComponents: [],

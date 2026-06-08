@@ -255,6 +255,13 @@ export const uiModelSchema = z.object({
     shell: z.enum(["single_page", "dashboard", "wizard"]),
     pageOrder: z.array(z.string())
   }),
+  appArchetype: z.enum([
+    "single_page_tool",
+    "form_to_result_tool",
+    "multi_page_app",
+    "dashboard_app",
+    "wizard_flow"
+  ]),
   navigation: z.object({
     type: z.enum(["minimal", "top_nav", "sidebar"]),
     globalNavItems: z.array(z.string())

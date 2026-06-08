@@ -263,6 +263,13 @@ export type AppStructure = {
   pageOrder: string[];
 };
 
+export type AppArchetype =
+  | "single_page_tool"
+  | "form_to_result_tool"
+  | "multi_page_app"
+  | "dashboard_app"
+  | "wizard_flow";
+
 export type NavigationModel = {
   type: "minimal" | "top_nav" | "sidebar";
   globalNavItems: string[];
@@ -281,6 +288,7 @@ export type ResponsivePolicy = {
 
 export type UIModel = {
   appStructure: AppStructure;
+  appArchetype: AppArchetype;
   navigation: NavigationModel;
   pages: PageContract[];
   globalComponents: GlobalComponent[];

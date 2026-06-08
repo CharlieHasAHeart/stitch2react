@@ -4,6 +4,7 @@ import type {
   StitchHtmlValidationIssue,
   StitchHtmlValidationReport
 } from "../../blueprint/types/blueprint.js";
+import { getAppArchetypeConstraints } from "../constraints/load-app-archetype-constraints.js";
 
 function issue(
   code: string,
@@ -30,11 +31,12 @@ export function validateStitchHtml(input: {
   page: PageContract;
   htmlArtifactId?: string;
   html: string;
+  appArchetype?: string;
   appShell?: string;
   navigationType?: string;
   pageCount?: number;
 }): StitchHtmlValidationReport {
-  const { sessionId, blueprintId, page, htmlArtifactId, html, appShell, navigationType, pageCount } = input;
+  const { sessionId, blueprintId, page, htmlArtifactId, html, appArchetype, appShell, navigationType, pageCount } = input;
   const issues: StitchHtmlValidationIssue[] = [];
   const lowered = html.toLowerCase();
 
@@ -88,27 +90,25 @@ export function validateStitchHtml(input: {
   const isSinglePageTool = appShell === "single_page" && navigationType === "minimal" && pageCount === 1;
   const hasExplicitPageNavigation =
     Boolean(page.primaryAction?.targetPageId) || page.secondaryActions.some((action) => action.targetPageId);
-  if (isSinglePageTool && !hasExplicitPageNavigation) {
+  const ruleSet = appArchetype ? getAppArchetypeConstraints(appArchetype as never) : null;
+  if (ruleSet && isSinglePageTool && !hasExplicitPageNavigation) {
     const hasNavContainer = /<nav[\s>]/i.test(html);
     const hasAnchorLinks = /<a[\s>][\s\S]*?href\s*=\s*["']#["']/i.test(html) || /<a[\s>][\s\S]*?href\s*=\s*["'][^"']+["']/i.test(html);
-    const hasNavigationLikeText = containsAny(lowered, [
-      />\s*dashboard\s*</i,
-      />\s*history\s*</i,
-      />\s*support\s*</i,
-      />\s*privacy policy\s*</i,
-      />\s*terms of service\s*</i,
-      />\s*compliance\s*</i,
-      />\s*contact\s*</i,
-      />\s*my quotes\s*</i
-    ]);
+    const hasNavigationLikeText = ruleSet.forbiddenNavigationLabels.some((label) =>
+      lowered.includes(label.toLowerCase())
+    );
 
-    if (hasNavContainer || hasAnchorLinks || hasNavigationLikeText) {
+    if (
+      (ruleSet.forbidClickableGlobalNavigation && (hasNavContainer || hasAnchorLinks)) ||
+      hasNavigationLikeText ||
+      (ruleSet.forbidClickableFooterLinks && hasAnchorLinks)
+    ) {
       issues.push(
         issue(
           "unexpected_navigation_ui",
-          "Single-page tool HTML should not include clickable navigation or footer links when the blueprint has minimal navigation and no page-to-page flow.",
+          "Single-page tool HTML violates the archetype constraint library by including navigation-like UI or clickable footer/header links.",
           "ui.navigation",
-          "Remove nav bars, dashboard/history tabs, support links, and legal/footer anchor links. Keep only non-clickable brand/footer text or local inline controls."
+          "Remove navigation-like UI that is forbidden by the archetype rule set, and keep only local inline controls."
         )
       );
     }

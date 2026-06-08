@@ -1,0 +1,27 @@
+single_page_tool:
+  promptRules:
+    - "This application is a true single-page tool."
+    - "Do not render a global navigation bar, dashboard tabs, history tabs, support entry, or request-switching header actions."
+    - "Do not render clickable legal, support, or contact links in the footer."
+    - "Brand text and trust text may appear, but keep them as plain text rather than anchor links."
+    - "All user interactions must stay inside this one page through submit, reset, retry, edit, inline feedback, or local state transitions."
+  forbiddenNavigationLabels:
+    - "dashboard"
+    - "history"
+    - "support"
+    - "my quotes"
+    - "privacy policy"
+    - "terms of service"
+    - "compliance"
+    - "contact"
+    - "仪表盘"
+    - "历史"
+    - "支持"
+    - "我的报价"
+    - "隐私政策"
+    - "使用条款"
+    - "合规"
+    - "联系支持"
+    - "联系我们"
+  forbidClickableGlobalNavigation: true
+  forbidClickableFooterLinks: true

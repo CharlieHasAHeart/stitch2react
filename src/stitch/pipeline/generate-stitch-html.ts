@@ -19,6 +19,7 @@ import type { ProjectBundleManifest } from "../../blueprint/persistence/file-sto
 import { buildStitchPromptPlan } from "../plan/build-stitch-prompt-plan.js";
 import { buildStitchPagePrompt } from "../prompts/build-stitch-page-prompt.js";
 import { validateStitchHtml } from "../validation/validate-stitch-html.js";
+import { resolveAppArchetype } from "../constraints/load-app-archetype-constraints.js";
 
 export type StitchHtmlStageClient = {
   generatePageHtml(input: {
@@ -154,6 +155,7 @@ export async function generateStitchHtmlFromFrozenBlueprint(
         page,
         htmlArtifactId: htmlArtifact.id,
         html: htmlResult.html,
+        appArchetype: resolveAppArchetype(frozenBlueprint),
         appShell: frozenBlueprint.ui.appStructure.shell,
         navigationType: frozenBlueprint.ui.navigation.type,
         pageCount: frozenBlueprint.ui.pages.length

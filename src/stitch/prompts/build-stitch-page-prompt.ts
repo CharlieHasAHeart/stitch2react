@@ -4,6 +4,10 @@ import type {
   StitchPagePromptArtifact,
   StitchPromptPlanPage
 } from "../../blueprint/types/blueprint.js";
+import {
+  getAppArchetypeConstraints,
+  resolveAppArchetype
+} from "../constraints/load-app-archetype-constraints.js";
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -20,23 +24,19 @@ function findSupportedFlowSummaries(blueprint: ProductBlueprintV1, page: PageCon
 
 function buildNavigationConstraints(frozenBlueprint: ProductBlueprintV1, page: PageContract): string[] {
   const constraints: string[] = [
+    `- appArchetype: ${resolveAppArchetype(frozenBlueprint)}`,
     `- appShell: ${frozenBlueprint.ui.appStructure.shell}`,
     `- navigationType: ${frozenBlueprint.ui.navigation.type}`,
     `- globalNavItems: ${frozenBlueprint.ui.navigation.globalNavItems.join(", ") || "none"}`
   ];
 
-  const isSinglePageTool =
-    frozenBlueprint.ui.appStructure.shell === "single_page" &&
-    frozenBlueprint.ui.navigation.type === "minimal" &&
-    frozenBlueprint.ui.pages.length === 1;
   const hasPageNavigationActions =
     Boolean(page.primaryAction?.targetPageId) || page.secondaryActions.some((action) => action.targetPageId);
+  const archetype = resolveAppArchetype(frozenBlueprint);
+  const ruleSet = getAppArchetypeConstraints(archetype);
 
-  if (isSinglePageTool && !hasPageNavigationActions) {
-    constraints.push(`- This is a true single-page tool. Do not render a global navigation bar or dashboard/history tabs.`);
-    constraints.push(`- Do not render clickable header links, footer links, support links, or legal links that imply page-to-page navigation.`);
-    constraints.push(`- Brand text and footer text may appear, but they must be plain text, not anchor links.`);
-    constraints.push(`- Keep all interactions inside this one page through form submission, inline state changes, reset, retry, or local panel updates.`);
+  if (ruleSet && !hasPageNavigationActions) {
+    constraints.push(...ruleSet.promptRules.map((rule) => `- ${rule}`));
   }
 
   return constraints;
