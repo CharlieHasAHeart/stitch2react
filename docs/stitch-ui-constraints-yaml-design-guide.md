@@ -12,7 +12,7 @@ HTML validation
 cross-page validation
 Codex SDK HTML postprocessing
 regeneration prompt tightening
-React handoff checks
+future React handoff checks
 ```
 
 This file must not become an app-type or archetype library.
@@ -29,7 +29,7 @@ frozen ProductBlueprintV1
   -> Codex SDK postprocess when code-fixable
   -> re-validation
   -> screenshot
-  -> React handoff
+  -> persist validated Stitch artifacts
 ```
 
 `stitch-ui-constraints.yaml` describes the reusable UI behavior rules that apply across generated pages.

@@ -2,7 +2,7 @@
 
 This document shows the current default pipeline at a high level.
 
-The default blueprint path remains deterministic after first-pass generation. Stitch HTML generation now adds Chrome DevTools MCP runtime validation before React handoff.
+The default blueprint path remains deterministic after first-pass generation. Stitch HTML generation now adds Chrome DevTools MCP runtime validation before validated artifact persistence. React remains a future direction.
 
 ## Full Default Pipeline
 
@@ -26,7 +26,7 @@ flowchart TD
   M --> N["Cross-page navigation/sidebar validation"]
   N --> O{"HTML valid?"}
   O -->|Yes| P["Capture screenshots"]
-  P --> Q["React handoff"]
+  P --> Q["Persist validated Stitch artifacts"]
   O -->|Code-fixable| R["Codex SDK HTML postprocess"]
   R --> L
   O -->|Not code-fixable| S["Regenerate page from frozen PageContract"]

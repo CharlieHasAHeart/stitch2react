@@ -4,7 +4,7 @@
 
 This repository implements a one-shot product understanding and generation pipeline.
 
-The system converts one user input into a frozen `ProductBlueprintV1`, then uses that frozen blueprint as the only source of truth for downstream Stitch HTML, screenshots, React, mock data, API, and state-generation work.
+The system converts one user input into a frozen `ProductBlueprintV1`, then uses that frozen blueprint as the only source of truth for downstream Stitch HTML, screenshots, and validation work. React, mock data, API, and state-generation are future directions, not the current implementation priority.
 
 ## Required Reading Order
 
@@ -20,7 +20,7 @@ The system converts one user input into a frozen `ProductBlueprintV1`, then uses
 
 - One user input only.
 - Frozen `ProductBlueprintV1` is the downstream source of truth.
-- Do not generate Stitch or React directly from raw input.
+- Do not generate Stitch directly from raw input. React is a future direction and is not part of the current required pipeline.
 - Flow modeling happens before page modeling.
 - Default blueprint repair must be deterministic; do not use LLM repair in the default path.
 
@@ -38,7 +38,7 @@ frozen ProductBlueprintV1
   -> Codex SDK postprocess when code-fixable
   -> re-validation
   -> screenshot
-  -> React handoff
+  -> persist validated Stitch artifacts
 ```
 
 ## Chrome DevTools MCP Runtime Validation

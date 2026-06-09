@@ -17,7 +17,7 @@ Stitch HTML
   -> Codex SDK postprocess when code-fixable
   -> re-validation
   -> screenshot
-  -> React handoff
+  -> persist validated Stitch artifacts
 ```
 
 ## Allowed fixes

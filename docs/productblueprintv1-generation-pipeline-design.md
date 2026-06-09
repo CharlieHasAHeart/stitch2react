@@ -30,7 +30,7 @@ rawInput
 2. Do not ask follow-up questions.
 3. Explicit user facts beat inferred/defaulted facts.
 4. Flow modeling happens before page modeling.
-5. The final frozen blueprint is the source of truth for downstream Stitch and React work.
+5. The final frozen blueprint is the source of truth for downstream Stitch work. React remains a future direction, not current priority scope.
 6. Default blueprint repair must not call LLM repair.
 7. If deterministic repair cannot safely fix the blueprint, fail with diagnostics or regenerate the affected stage under a stricter generation contract.
 
@@ -58,7 +58,7 @@ Incorrect:
 
 ```text
 rawInput -> Stitch prompt
-rawInput -> React project
+rawInput -> future React project work
 ```
 
 ## Stitch Validation Boundary

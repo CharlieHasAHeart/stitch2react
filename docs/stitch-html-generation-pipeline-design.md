@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This pipeline converts a frozen `ProductBlueprintV1` into validated Stitch HTML artifacts and screenshots for React handoff.
+This pipeline converts a frozen `ProductBlueprintV1` into validated Stitch HTML artifacts and screenshots. React handoff is a future direction and is not part of the current required implementation scope.
 
 ## Default Pipeline
 
@@ -17,7 +17,7 @@ frozen ProductBlueprintV1
   -> Codex SDK postprocess when code-fixable
   -> re-validation
   -> screenshots
-  -> React handoff
+  -> persist validated Stitch artifacts
 ```
 
 ## Source of Truth
@@ -77,14 +77,10 @@ If postprocess cannot safely fix the issue, regenerate the affected page from th
 
 Do not ask an LLM to patch the existing HTML in the default path.
 
-## React Handoff
+## Future React Direction
 
-React generation consumes:
+React generation is a future downstream direction.
 
-```text
-frozen ProductBlueprintV1
-validated Stitch HTML
-runtime validation reports
-postprocess reports
-screenshots, when available
-```
+It must not shape the current implementation boundary.
+
+For now, the required output of this pipeline is validated Stitch HTML artifacts, reports, and screenshots.
