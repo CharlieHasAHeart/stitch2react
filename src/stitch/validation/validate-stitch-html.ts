@@ -1,10 +1,11 @@
 import { createId } from "../../blueprint/shared/ids.js";
 import type {
   PageContract,
+  ProductBlueprintV1,
   StitchHtmlValidationIssue,
   StitchHtmlValidationReport
 } from "../../blueprint/types/blueprint.js";
-import { getAppArchetypeConstraints } from "../constraints/load-app-archetype-constraints.js";
+import { loadStitchUiConstraints } from "../constraints/load-stitch-ui-constraints.js";
 
 function issue(
   code: string,
@@ -25,30 +26,59 @@ function containsAny(html: string, patterns: RegExp[]): boolean {
   return patterns.some((pattern) => pattern.test(html));
 }
 
+function collectDeclaredNavigationLabels(page: PageContract, blueprint: ProductBlueprintV1): string[] {
+  const pageNames = blueprint.ui.pages.map((item) => item.name.toLowerCase());
+  const pageRoutes = blueprint.ui.pages.map((item) => item.route.toLowerCase());
+  const actionLabels = [
+    ...(page.primaryAction ? [page.primaryAction.label.toLowerCase()] : []),
+    ...page.secondaryActions.map((action) => action.label.toLowerCase())
+  ];
+  return [...new Set([...pageNames, ...pageRoutes, ...actionLabels, ...blueprint.ui.navigation.globalNavItems.map((i) => i.toLowerCase())])];
+}
+
+function detectMissingClickBehavior(html: string): boolean {
+  const clickableRegexes = [
+    /<button\b[^>]*>/gi,
+    /<a\b[^>]*href\s*=\s*["'][^"']+["'][^>]*>/gi,
+    /<[^>]+role\s*=\s*["']button["'][^>]*>/gi,
+    /<[^>]+data-action\s*=\s*["'][^"']+["'][^>]*>/gi
+  ];
+  const clickables = clickableRegexes.flatMap((pattern) => html.match(pattern) ?? []);
+  if (clickables.length === 0) {
+    return false;
+  }
+
+  return clickables.some((tag) => {
+    const lowered = tag.toLowerCase();
+    const hasNoopHref = lowered.includes('href="#"') || lowered.includes("javascript:void(0)");
+    const hasButtonType = lowered.includes('type="submit"') || lowered.includes("type='submit'") || lowered.includes('type="reset"') || lowered.includes("type='reset'");
+    const hasBehaviorAttribute = /(data-action|aria-controls|aria-expanded|onclick|href\s*=\s*["']\/|href\s*=\s*["'][^.?#][^"']*["'])/i.test(tag);
+    return hasNoopHref || (!hasButtonType && !hasBehaviorAttribute);
+  });
+}
+
 export function validateStitchHtml(input: {
   sessionId: string;
   blueprintId: string;
   page: PageContract;
+  blueprint: ProductBlueprintV1;
   htmlArtifactId?: string;
   html: string;
-  appArchetype?: string;
-  appShell?: string;
-  navigationType?: string;
-  pageCount?: number;
 }): StitchHtmlValidationReport {
-  const { sessionId, blueprintId, page, htmlArtifactId, html, appArchetype, appShell, navigationType, pageCount } = input;
+  const { sessionId, blueprintId, page, blueprint, htmlArtifactId, html } = input;
   const issues: StitchHtmlValidationIssue[] = [];
   const lowered = html.toLowerCase();
+  const constraints = loadStitchUiConstraints();
 
   if (!html.trim()) {
     issues.push(issue("html_empty", "Generated HTML is empty."));
   }
 
-  if (!/<body[\s>]/i.test(html) && !/<main[\s>]/i.test(html) && !/<div/i.test(html)) {
+  if (constraints.html.requireVisibleRoot && !/<body[\s>]/i.test(html) && !/<main[\s>]/i.test(html) && !/<div/i.test(html)) {
     issues.push(issue("html_missing_visible_root", "HTML must contain a visible root container such as body, main, or div."));
   }
 
-  if (!containsAny(lowered, [/<h1/i, /<h2/i, /<title/i])) {
+  if (constraints.html.requireHeading && !containsAny(lowered, [/<h1/i, /<h2/i, /<title/i])) {
     issues.push(issue("html_missing_heading", "Generated HTML should include a heading or title for the page."));
   }
 
@@ -66,16 +96,10 @@ export function validateStitchHtml(input: {
     }
   }
 
-  if ((page.readonly || page.confirmationOnly) && page.secondaryActions.length > 0) {
+  if (page.secondaryActions.length > 0) {
     const hasAnySecondary = page.secondaryActions.some((action) => lowered.includes(action.label.toLowerCase()));
     if (!hasAnySecondary) {
-      issues.push(
-        issue(
-          "missing_secondary_action",
-          "Readonly or confirmation page is missing its required secondary action(s).",
-          "secondaryActions"
-        )
-      );
+      issues.push(issue("missing_secondary_action", "Page is missing its required secondary action(s).", "secondaryActions"));
     }
   }
 
@@ -87,36 +111,38 @@ export function validateStitchHtml(input: {
     issues.push(issue("missing_recovery_surface", "Page contract requires recovery surfaces but none are evident in the HTML.", "recoverySurfaces"));
   }
 
-  const isSinglePageTool = appShell === "single_page" && navigationType === "minimal" && pageCount === 1;
-  const hasExplicitPageNavigation =
-    Boolean(page.primaryAction?.targetPageId) || page.secondaryActions.some((action) => action.targetPageId);
-  const ruleSet = appArchetype ? getAppArchetypeConstraints(appArchetype as never) : null;
-  if (ruleSet && isSinglePageTool && !hasExplicitPageNavigation) {
-    const hasNavContainer = /<nav[\s>]/i.test(html);
-    const hasAnchorLinks = /<a[\s>][\s\S]*?href\s*=\s*["']#["']/i.test(html) || /<a[\s>][\s\S]*?href\s*=\s*["'][^"']+["']/i.test(html);
-    const hasNavigationLikeText = ruleSet.forbiddenNavigationLabels.some((label) =>
-      lowered.includes(label.toLowerCase())
+  if (constraints.interaction.requireVisibleBehaviorForClickableElements && detectMissingClickBehavior(html)) {
+    issues.push(
+      issue(
+        "missing_click_behavior",
+        "Every clickable element must produce visible behavior such as submit, reset, modal, drawer, toggle, toast, inline feedback, or declared navigation.",
+        "interaction",
+        "Add visible click behavior or convert decorative click targets to non-clickable elements."
+      )
     );
+  }
 
-    if (
-      (ruleSet.forbidClickableGlobalNavigation && (hasNavContainer || hasAnchorLinks)) ||
-      hasNavigationLikeText ||
-      (ruleSet.forbidClickableFooterLinks && hasAnchorLinks)
-    ) {
+  if (!constraints.navigation.allowInventedGlobalNavigation) {
+    const declaredLabels = collectDeclaredNavigationLabels(page, blueprint);
+    const forbiddenLabels = constraints.navigation.forbiddenInventedLabels.filter((label) => !declaredLabels.includes(label.toLowerCase()));
+    const hasInventedLabel = forbiddenLabels.some((label) => lowered.includes(label.toLowerCase()));
+    const hasUnexpectedNav = /<nav[\s>]/i.test(html) && blueprint.ui.navigation.globalNavItems.length === 0;
+    if (hasInventedLabel || hasUnexpectedNav) {
       issues.push(
         issue(
-          "unexpected_navigation_ui",
-          "Single-page tool HTML violates the archetype constraint library by including navigation-like UI or clickable footer/header links.",
+          "invented_navigation",
+          "Generated HTML adds navigation that is not declared in the frozen blueprint.",
           "ui.navigation",
-          "Remove navigation-like UI that is forbidden by the archetype rule set, and keep only local inline controls."
+          "Remove invented navigation and keep only blueprint-declared destinations."
         )
       );
     }
   }
 
   const oversizedImageOnly =
+    constraints.html.forbidPrimaryUiAsImage &&
     /<img/i.test(html) &&
-    !containsAny(lowered, [/<button/i, /<input/i, /<form/i, /<label/i, /<textarea/i, /<select/i, /<nav/i]);
+    !containsAny(lowered, [/<button/i, /<input/i, /<form/i, /<label/i, /<textarea/i, /<select/i, /<main/i]);
   if (oversizedImageOnly) {
     issues.push(
       issue(

@@ -255,13 +255,6 @@ export const uiModelSchema = z.object({
     shell: z.enum(["single_page", "dashboard", "wizard"]),
     pageOrder: z.array(z.string())
   }),
-  appArchetype: z.enum([
-    "single_page_tool",
-    "form_to_result_tool",
-    "multi_page_app",
-    "dashboard_app",
-    "wizard_flow"
-  ]),
   navigation: z.object({
     type: z.enum(["minimal", "top_nav", "sidebar"]),
     globalNavItems: z.array(z.string())
@@ -624,6 +617,46 @@ export const stitchHtmlValidationReportSchema = z.object({
   htmlArtifactId: z.string().optional(),
   passed: z.boolean(),
   issues: z.array(stitchHtmlValidationIssueSchema),
+  createdAt: z.string()
+});
+
+export const stitchCrossPageValidationReportSchema = z.object({
+  id: z.string(),
+  sessionId: z.string(),
+  blueprintId: z.string(),
+  pageIds: z.array(z.string()),
+  htmlArtifactIds: z.array(z.string()),
+  passed: z.boolean(),
+  issues: z.array(stitchHtmlValidationIssueSchema),
+  createdAt: z.string()
+});
+
+export const stitchHtmlPostprocessReportSchema = z.object({
+  id: z.string(),
+  sessionId: z.string(),
+  blueprintId: z.string(),
+  pageIds: z.array(z.string()),
+  sourceIssueCodes: z.array(z.string()),
+  appliedFixes: z.array(z.string()),
+  changedArtifacts: z.array(z.string()),
+  rejectedFixes: z.array(
+    z.object({
+      fix: z.string(),
+      reason: z.string()
+    })
+  ),
+  createdAt: z.string()
+});
+
+export const validatedStitchArtifactGateReportSchema = z.object({
+  id: z.string(),
+  sessionId: z.string(),
+  blueprintId: z.string(),
+  pageIds: z.array(z.string()),
+  htmlArtifactIds: z.array(z.string()),
+  validationArtifactIds: z.array(z.string()),
+  passed: z.boolean(),
+  issues: z.array(z.string()),
   createdAt: z.string()
 });
 

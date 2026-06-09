@@ -263,13 +263,6 @@ export type AppStructure = {
   pageOrder: string[];
 };
 
-export type AppArchetype =
-  | "single_page_tool"
-  | "form_to_result_tool"
-  | "multi_page_app"
-  | "dashboard_app"
-  | "wizard_flow";
-
 export type NavigationModel = {
   type: "minimal" | "top_nav" | "sidebar";
   globalNavItems: string[];
@@ -288,7 +281,6 @@ export type ResponsivePolicy = {
 
 export type UIModel = {
   appStructure: AppStructure;
-  appArchetype: AppArchetype;
   navigation: NavigationModel;
   pages: PageContract[];
   globalComponents: GlobalComponent[];
@@ -460,6 +452,9 @@ export type ArtifactType =
   | "stitch_html"
   | "stitch_screenshot"
   | "stitch_html_validation_report"
+  | "stitch_cross_page_validation_report"
+  | "stitch_html_postprocess_report"
+  | "validated_stitch_artifact_gate_report"
   | "stitch_page_generation_report";
 
 export type BlueprintVersionStatus =
@@ -699,6 +694,41 @@ export type StitchHtmlValidationReport = {
   createdAt: string;
 };
 
+export type StitchCrossPageValidationReport = {
+  id: string;
+  sessionId: string;
+  blueprintId: string;
+  pageIds: string[];
+  htmlArtifactIds: string[];
+  passed: boolean;
+  issues: StitchHtmlValidationIssue[];
+  createdAt: string;
+};
+
+export type StitchHtmlPostprocessReport = {
+  id: string;
+  sessionId: string;
+  blueprintId: string;
+  pageIds: string[];
+  sourceIssueCodes: string[];
+  appliedFixes: string[];
+  changedArtifacts: string[];
+  rejectedFixes: { fix: string; reason: string }[];
+  createdAt: string;
+};
+
+export type ValidatedStitchArtifactGateReport = {
+  id: string;
+  sessionId: string;
+  blueprintId: string;
+  pageIds: string[];
+  htmlArtifactIds: string[];
+  validationArtifactIds: string[];
+  passed: boolean;
+  issues: string[];
+  createdAt: string;
+};
+
 export type StitchPageGenerationReport = {
   id: string;
   sessionId: string;
@@ -735,6 +765,8 @@ export type StitchPipelineResult = {
   blueprintId: string;
   promptPlanArtifactId: string;
   pageResults: StitchPageGenerationResult[];
+  crossPageValidationReportId?: string;
+  validatedArtifactGateReportId?: string;
 };
 
 export type QualityRepairCandidate = {

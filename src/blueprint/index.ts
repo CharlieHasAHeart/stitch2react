@@ -18,4 +18,7 @@ export * from "./validation/validate-blueprint.js";
 export * from "../stitch/plan/build-stitch-prompt-plan.js";
 export * from "../stitch/prompts/build-stitch-page-prompt.js";
 export * from "../stitch/validation/validate-stitch-html.js";
+export * from "../stitch/validation/validate-stitch-cross-page.js";
+export * from "../stitch/postprocess/postprocess-stitch-html.js";
+export * from "../stitch/constraints/load-stitch-ui-constraints.js";
 export * from "../stitch/pipeline/generate-stitch-html.js";

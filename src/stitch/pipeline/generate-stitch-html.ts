@@ -1,25 +1,29 @@
 import { StitchToolClient, Stitch } from "@google/stitch-sdk";
 import {
+  validatedStitchArtifactGateReportSchema,
+  stitchCrossPageValidationReportSchema,
+  stitchHtmlPostprocessReportSchema,
   stitchHtmlValidationReportSchema,
   stitchPagePromptArtifactSchema,
   stitchPromptPlanSchema
 } from "../../blueprint/schemas/blueprint.js";
+import type { BlueprintRepository } from "../../blueprint/persistence/repository.js";
+import type { ProjectBundleManifest } from "../../blueprint/persistence/file-store.js";
 import { readStitchEnv } from "../../blueprint/shared/env.js";
 import { createId } from "../../blueprint/shared/ids.js";
 import type {
-  ProductBlueprintV1,
+  GenerationArtifact,
+  ValidatedStitchArtifactGateReport,
   StitchGenerationInput,
   StitchPageGenerationReport,
   StitchPageGenerationResult,
   StitchPipelineResult
 } from "../../blueprint/types/blueprint.js";
-import type { GenerationArtifact } from "../../blueprint/types/blueprint.js";
-import type { BlueprintRepository } from "../../blueprint/persistence/repository.js";
-import type { ProjectBundleManifest } from "../../blueprint/persistence/file-store.js";
 import { buildStitchPromptPlan } from "../plan/build-stitch-prompt-plan.js";
+import { postprocessStitchHtml } from "../postprocess/postprocess-stitch-html.js";
 import { buildStitchPagePrompt } from "../prompts/build-stitch-page-prompt.js";
+import { validateStitchCrossPage } from "../validation/validate-stitch-cross-page.js";
 import { validateStitchHtml } from "../validation/validate-stitch-html.js";
-import { resolveAppArchetype } from "../constraints/load-app-archetype-constraints.js";
 
 export type StitchHtmlStageClient = {
   generatePageHtml(input: {
@@ -50,6 +54,26 @@ function projectRelativePath(...parts: string[]): string {
   return parts.join("/");
 }
 
+function buildValidatedArtifactGate(input: {
+  sessionId: string;
+  blueprintId: string;
+  pageResults: StitchPageGenerationResult[];
+}): ValidatedStitchArtifactGateReport {
+  const { sessionId, blueprintId, pageResults } = input;
+  const invalidPages = pageResults.filter((page) => page.status !== "validated");
+  return {
+    id: createId("validated_gate"),
+    sessionId,
+    blueprintId,
+    pageIds: pageResults.map((page) => page.pageId),
+    htmlArtifactIds: pageResults.map((page) => page.htmlArtifactId).filter(Boolean) as string[],
+    validationArtifactIds: pageResults.map((page) => page.validationReportId),
+    passed: invalidPages.length === 0,
+    issues: invalidPages.map((page) => `Page ${page.pageId} is not validated and cannot be used by future downstream consumption.`),
+    createdAt: new Date().toISOString()
+  };
+}
+
 export async function generateStitchHtmlFromFrozenBlueprint(
   input: StitchGenerationInput,
   options: GenerateStitchHtmlOptions
@@ -57,21 +81,17 @@ export async function generateStitchHtmlFromFrozenBlueprint(
   const { sessionId, blueprintId, frozenBlueprint, targetPages } = input;
   const { repository, stageClient } = options;
 
+  const blueprintVersion = repository.requireBlueprintVersion(blueprintId);
+  if (blueprintVersion.status !== "frozen") {
+    throw new Error(`Blueprint ${blueprintId} must be frozen before Stitch generation.`);
+  }
+
   repository.setSessionStatus(sessionId, "stitch_prompt_planning");
   const promptPlan = stitchPromptPlanSchema.parse(
     buildStitchPromptPlan(sessionId, blueprintId, frozenBlueprint, targetPages)
   );
   const promptPlanArtifact = repository.saveArtifact(sessionId, "stitch_prompt_plan", promptPlan);
   const projectId = blueprintId;
-  let blueprintArtifactId = "";
-  let blueprintVersionNumber = 0;
-  try {
-    const blueprintVersion = repository.requireBlueprintVersion(blueprintId);
-    blueprintArtifactId = blueprintVersion.artifactId;
-    blueprintVersionNumber = blueprintVersion.version;
-  } catch {
-    blueprintVersionNumber = 0;
-  }
   const blueprintJsonPath = repository.saveProjectBundleFile(
     projectId,
     projectRelativePath("blueprint", "frozen-blueprint.json"),
@@ -85,6 +105,7 @@ export async function generateStitchHtmlFromFrozenBlueprint(
 
   const pageResults: StitchPageGenerationResult[] = [];
   const manifestPages: ProjectBundleManifest["pages"] = [];
+  const crossPageInputs: Array<{ pageId: string; htmlArtifactId: string; html: string }> = [];
 
   for (const planPage of promptPlan.pages) {
     const page = frozenBlueprint.ui.pages.find((item) => item.id === planPage.pageId);
@@ -110,24 +131,12 @@ export async function generateStitchHtmlFromFrozenBlueprint(
       prompt: promptArtifact.prompt
     });
 
-    const htmlArtifact = repository.saveArtifact(sessionId, "stitch_html", {
+    let currentHtml = htmlResult.html;
+    let htmlArtifact = repository.saveArtifact(sessionId, "stitch_html", {
       pageId: page.id,
-      html: htmlResult.html
+      html: currentHtml
     });
-    repository.savePageHtmlFile(sessionId, page.id, htmlResult.html);
-    const projectHtmlArtifactPath = repository.saveProjectBundleFile(
-      projectId,
-      projectRelativePath("stitch", "pages", page.id, "html.json"),
-      {
-        pageId: page.id,
-        html: htmlResult.html
-      }
-    );
-    const projectHtmlFilePath = repository.saveProjectBundleTextFile(
-      projectId,
-      projectRelativePath("stitch", "pages", page.id, "page.html"),
-      htmlResult.html
-    );
+    repository.savePageHtmlFile(sessionId, page.id, currentHtml);
 
     let screenshotArtifactId: string | undefined;
     let projectScreenshotArtifactPath: string | undefined;
@@ -148,20 +157,62 @@ export async function generateStitchHtmlFromFrozenBlueprint(
     }
 
     repository.setSessionStatus(sessionId, "stitch_validating");
-    const validationReport = stitchHtmlValidationReportSchema.parse(
+    let validationReport = stitchHtmlValidationReportSchema.parse(
       validateStitchHtml({
         sessionId,
         blueprintId,
         page,
+        blueprint: frozenBlueprint,
         htmlArtifactId: htmlArtifact.id,
-        html: htmlResult.html,
-        appArchetype: resolveAppArchetype(frozenBlueprint),
-        appShell: frozenBlueprint.ui.appStructure.shell,
-        navigationType: frozenBlueprint.ui.navigation.type,
-        pageCount: frozenBlueprint.ui.pages.length
+        html: currentHtml
       })
     );
+
+    if (!validationReport.passed) {
+      const { html: postprocessedHtml, report } = postprocessStitchHtml({
+        sessionId,
+        blueprintId,
+        blueprint: frozenBlueprint,
+        page,
+        htmlArtifactId: htmlArtifact.id,
+        html: currentHtml,
+        issues: validationReport.issues
+      });
+      if (postprocessedHtml !== currentHtml) {
+        currentHtml = postprocessedHtml;
+        htmlArtifact = repository.saveArtifact(sessionId, "stitch_html", {
+          pageId: page.id,
+          html: currentHtml
+        });
+        repository.saveArtifact(sessionId, "stitch_html_postprocess_report", stitchHtmlPostprocessReportSchema.parse(report));
+        repository.savePageHtmlFile(sessionId, page.id, currentHtml);
+        validationReport = stitchHtmlValidationReportSchema.parse(
+          validateStitchHtml({
+            sessionId,
+            blueprintId,
+            page,
+            blueprint: frozenBlueprint,
+            htmlArtifactId: htmlArtifact.id,
+            html: currentHtml
+          })
+        );
+      }
+    }
+
     const persistedValidation = repository.saveArtifact(sessionId, "stitch_html_validation_report", validationReport);
+    const projectHtmlArtifactPath = repository.saveProjectBundleFile(
+      projectId,
+      projectRelativePath("stitch", "pages", page.id, "html.json"),
+      {
+        pageId: page.id,
+        html: currentHtml
+      }
+    );
+    const projectHtmlFilePath = repository.saveProjectBundleTextFile(
+      projectId,
+      projectRelativePath("stitch", "pages", page.id, "page.html"),
+      currentHtml
+    );
     const projectValidationArtifactPath = repository.saveProjectBundleFile(
       projectId,
       projectRelativePath("stitch", "pages", page.id, "validation.json"),
@@ -197,6 +248,7 @@ export async function generateStitchHtmlFromFrozenBlueprint(
       validationReportId: persistedValidation.id,
       status: pageReport.status
     });
+    crossPageInputs.push({ pageId: page.id, htmlArtifactId: htmlArtifact.id, html: currentHtml });
     manifestPages.push({
       pageId: page.id,
       promptArtifactPath: projectPromptPath,
@@ -209,13 +261,34 @@ export async function generateStitchHtmlFromFrozenBlueprint(
     });
   }
 
+  const crossPageReport = stitchCrossPageValidationReportSchema.parse(
+    validateStitchCrossPage({
+      sessionId,
+      blueprintId,
+      blueprint: frozenBlueprint,
+      pages: crossPageInputs
+    })
+  );
+  const crossPageValidationArtifact = repository.saveArtifact(sessionId, "stitch_cross_page_validation_report", crossPageReport);
+  repository.saveProjectBundleFile(projectId, projectRelativePath("stitch", "cross-page-validation.json"), crossPageReport);
+
+  const validatedArtifactGate = validatedStitchArtifactGateReportSchema.parse(
+    buildValidatedArtifactGate({
+      sessionId,
+      blueprintId,
+      pageResults: crossPageReport.passed ? pageResults : pageResults.map((page) => ({ ...page, status: "failed" as const }))
+    })
+  );
+  const validatedArtifactGateArtifact = repository.saveArtifact(sessionId, "validated_stitch_artifact_gate_report", validatedArtifactGate);
+  repository.saveProjectBundleFile(projectId, projectRelativePath("stitch", "validated-artifacts-gate.json"), validatedArtifactGate);
+
   repository.setSessionStatus(sessionId, "stitch_completed");
   repository.saveProjectBundleManifest(projectId, {
     projectId,
     sessionId,
     blueprintId,
-    blueprintArtifactId,
-    blueprintVersion: blueprintVersionNumber,
+    blueprintArtifactId: blueprintVersion.artifactId,
+    blueprintVersion: blueprintVersion.version,
     status: "stitch_completed",
     blueprintJsonPath,
     stitchPromptPlanPath,
@@ -227,7 +300,9 @@ export async function generateStitchHtmlFromFrozenBlueprint(
     sessionId,
     blueprintId,
     promptPlanArtifactId: promptPlanArtifact.id,
-    pageResults
+    pageResults,
+    crossPageValidationReportId: crossPageValidationArtifact.id,
+    validatedArtifactGateReportId: validatedArtifactGateArtifact.id
   };
 }
 
@@ -263,9 +338,10 @@ export class StubStitchHtmlStageClient implements StitchHtmlStageClient {
       <form>
         <label>Title<input type="text" name="title" /></label>
         ${primaryAction && primaryAction !== "none" ? `<button type="submit">${primaryAction}</button>` : ""}
+        ${secondaryActions.some((label) => /reset/i.test(label)) ? `<button type="reset">Reset</button>` : ""}
       </form>
-      ${secondaryActions.map((label) => `<button type="button">${label}</button>`).join("")}
-      ${feedbackSurfaces && feedbackSurfaces !== "none" ? `<div class="feedback">Success message shown inline.</div>` : ""}
+      ${secondaryActions.filter((label) => !/reset/i.test(label)).map((label) => `<button type="button" data-action="show_inline_feedback">${label}</button>`).join("")}
+      ${feedbackSurfaces && feedbackSurfaces !== "none" ? `<div class="feedback" data-feedback-surface="inline">Success message shown inline.</div>` : ""}
       ${recoverySurfaces && recoverySurfaces !== "none" ? `<div class="recovery">Retry or edit the form.</div>` : ""}
     </main>
   </body>
@@ -324,26 +400,17 @@ export class GoogleStitchSdkStageClient implements StitchHtmlStageClient {
 
       let screenshotBase64: string | undefined;
       if (imageUrl) {
-        const imageBuffer = await fetch(imageUrl).then(async (response) => {
-          if (!response.ok) {
-            throw new Error(`Failed to download Stitch screenshot for ${input.pageId}: ${response.status} ${response.statusText}`);
-          }
-          return Buffer.from(await response.arrayBuffer());
-        });
-        screenshotBase64 = imageBuffer.toString("base64");
+        const imageResponse = await fetch(imageUrl);
+        if (imageResponse.ok) {
+          const buffer = Buffer.from(await imageResponse.arrayBuffer());
+          screenshotBase64 = buffer.toString("base64");
+        }
       }
 
-      return {
-        html,
-        screenshotBase64
-      };
+      return { html, screenshotBase64 };
     } catch (error) {
-      if (error instanceof Error && /(401|AUTH_FAILED|invalid authentication credentials)/i.test(error.message)) {
-        throw new Error(
-          "Stitch authentication failed. Provide either a valid STITCH_API_KEY, or STITCH_ACCESS_TOKEN together with GOOGLE_CLOUD_PROJECT."
-        );
-      }
-      throw error;
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`Stitch generation failed for ${input.pageId}: ${message}`);
     }
   }
 }

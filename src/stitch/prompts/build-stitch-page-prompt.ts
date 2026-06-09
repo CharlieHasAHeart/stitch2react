@@ -4,10 +4,7 @@ import type {
   StitchPagePromptArtifact,
   StitchPromptPlanPage
 } from "../../blueprint/types/blueprint.js";
-import {
-  getAppArchetypeConstraints,
-  resolveAppArchetype
-} from "../constraints/load-app-archetype-constraints.js";
+import { loadStitchUiConstraints } from "../constraints/load-stitch-ui-constraints.js";
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -22,24 +19,21 @@ function findSupportedFlowSummaries(blueprint: ProductBlueprintV1, page: PageCon
     });
 }
 
-function buildNavigationConstraints(frozenBlueprint: ProductBlueprintV1, page: PageContract): string[] {
-  const constraints: string[] = [
-    `- appArchetype: ${resolveAppArchetype(frozenBlueprint)}`,
-    `- appShell: ${frozenBlueprint.ui.appStructure.shell}`,
-    `- navigationType: ${frozenBlueprint.ui.navigation.type}`,
-    `- globalNavItems: ${frozenBlueprint.ui.navigation.globalNavItems.join(", ") || "none"}`
-  ];
+function buildConstraintLines(frozenBlueprint: ProductBlueprintV1, page: PageContract): string[] {
+  const constraints = loadStitchUiConstraints();
+  const lines = [...constraints.promptRules.global.map((rule) => `- ${rule}`)];
 
-  const hasPageNavigationActions =
-    Boolean(page.primaryAction?.targetPageId) || page.secondaryActions.some((action) => action.targetPageId);
-  const archetype = resolveAppArchetype(frozenBlueprint);
-  const ruleSet = getAppArchetypeConstraints(archetype);
+  lines.push(`- navigationType: ${frozenBlueprint.ui.navigation.type}`);
+  lines.push(`- globalNavItems: ${frozenBlueprint.ui.navigation.globalNavItems.join(", ") || "none"}`);
+  lines.push(`- pageRoute: ${page.route}`);
 
-  if (ruleSet && !hasPageNavigationActions) {
-    constraints.push(...ruleSet.promptRules.map((rule) => `- ${rule}`));
+  if (page.primaryAction?.targetPageId || page.secondaryActions.some((action) => action.targetPageId)) {
+    lines.push("- Navigation may only target declared blueprint pages.");
+  } else {
+    lines.push("- Do not invent navigation or global links.");
   }
 
-  return constraints;
+  return lines;
 }
 
 export function buildStitchPagePrompt(
@@ -50,7 +44,7 @@ export function buildStitchPagePrompt(
   page: PageContract
 ): StitchPagePromptArtifact {
   const supportedFlowSummaries = findSupportedFlowSummaries(frozenBlueprint, page);
-  const navigationConstraints = buildNavigationConstraints(frozenBlueprint, page);
+  const constraintLines = buildConstraintLines(frozenBlueprint, page);
 
   const prompt = [
     `Generate a single HTML page for Stitch from the frozen ProductBlueprintV1.`,
@@ -75,9 +69,10 @@ export function buildStitchPagePrompt(
     `- recoverySurfaces: ${page.recoverySurfaces.map((surface) => surface.type).join(", ") || "none"}`,
     `- requiredSections: ${page.sections.map((section) => section.name).join(", ") || "none"}`,
     `- componentRequirements: ${page.componentRequirements.map((item) => `${item.type}:${item.purpose}`).join(", ") || "none"}`,
+    `- completionSignals: ${supportedFlowSummaries.map((summary) => summary.split("; completion=")[1] ?? "").filter(Boolean).join(", ") || "none"}`,
     ``,
-    `Navigation and shell constraints:`,
-    ...navigationConstraints,
+    `Relevant Stitch UI constraints:`,
+    ...constraintLines,
     ``,
     `Flow requirements:`,
     ...supportedFlowSummaries.map((summary) => `- ${summary}`),
@@ -86,7 +81,8 @@ export function buildStitchPagePrompt(
     `- Use real HTML elements.`,
     `- Use real text, real buttons, and real form controls.`,
     `- Do not embed the primary UI in an image.`,
-    `- Respect visualPolicy.imageUsage.forbidUiAsImage = true.`,
+    `- Every clickable element must produce a visible interaction.`,
+    `- Hover, focus, highlight, or color change alone is not enough.`,
     `- Make the page self-contained and editable.`,
     `- Do not invent new pages, flows, roles, auth, payment, collaboration, or integrations.`,
     ``,
