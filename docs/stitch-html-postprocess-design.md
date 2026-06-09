@@ -1,28 +1,47 @@
 # Stitch HTML Postprocess Design
 
-## 1. Purpose
+## Purpose
 
-Codex SDK postprocess fixes local, code-verifiable HTML issues after Stitch generation.
+Codex SDK postprocess fixes local, code-verifiable HTML issues after validation.
 
-It is not LLM repair.
+It is not LLM repair and must not rewrite the product.
 
-It must not reinterpret raw input or change the frozen blueprint.
-
-## 2. Pipeline position
+## Inputs
 
 ```text
-Stitch HTML
-  -> deterministic validation
-  -> Codex SDK postprocess if code-fixable
-  -> revalidation
-  -> regeneration only if still failing and retry remains
+frozen ProductBlueprintV1
+Stitch HTML artifacts
+static validation report
+Chrome DevTools MCP runtime evidence
+stitch-ui-constraints.yaml
 ```
 
-## 3. Allowed fixes
+## Postprocess Flow
 
-Allowed fixes come from `stitch-ui-constraints.yaml`.
+```text
+validation issue
+  -> check if issue is code-fixable
+  -> apply allowed Codex SDK fix
+  -> persist postprocess report
+  -> re-run static validation
+  -> re-run Chrome DevTools MCP runtime validation
+```
+
+## Runtime Evidence Driven Fixes
+
+Use MCP evidence to decide exact fixes.
 
 Examples:
+
+```text
+missing_runtime_click_behavior -> add modal/toast/toggle/form handler
+click_only_changes_focus_or_hover -> replace decorative behavior with visible state change
+sidebar_inconsistent_across_pages -> normalize sidebar from canonical blueprint navigation
+undeclared_navigation_destination -> remove link or convert to local button
+console_runtime_error -> patch local deterministic script error
+```
+
+## Allowed Fixes
 
 ```text
 add_modal_for_unhandled_button
@@ -34,52 +53,35 @@ add_toggle_panel_behavior
 normalize_sidebar_across_pages
 remove_or_disable_invented_navigation
 convert_fake_link_to_button
+add_data_action_attributes
 ```
 
-## 4. Forbidden fixes
+## Forbidden Fixes
 
-Postprocess must not:
+Codex SDK postprocess must not:
 
 ```text
-change product scope
-add new user flows
 add new pages
-add auth/payment/collaboration/integrations
-rewrite page for style preference
+add new flows
+add login/payment/collaboration/integration scope
 reinterpret raw input
-modify frozen ProductBlueprintV1
+rewrite entire page for style
+change the frozen blueprint
+hide validation failures without fixing them
 ```
 
-## 5. Click behavior fixes
+## Sidebar Normalization
 
-For safe unhandled click targets, Codex may add:
-
-```text
-modal behavior
-drawer behavior
-toggle panel behavior
-toast behavior
-inline success/error state
-form submit/reset handler
-data-action attributes
-```
-
-The chosen behavior should match the PageContract action purpose.
-
-## 6. Sidebar normalization
-
-If sidebars differ across pages and a canonical source exists, Codex may normalize them.
-
-Canonical source preference:
+If sidebars differ across pages, Codex may normalize them using:
 
 ```text
 blueprint.ui.navigation.globalNavItems
-declared page routes from PageContracts
+or declared page routes when the blueprint explicitly supports page navigation
 ```
 
-Only active state may differ by page.
+Labels, order, and destinations must match. Active state may differ.
 
-## 7. Postprocess report
+## Report
 
 Every postprocess run must persist:
 
@@ -91,20 +93,12 @@ type StitchHtmlPostprocessReport = {
   pageIds: string[];
   sourceIssueCodes: string[];
   appliedFixes: string[];
-  changedArtifacts: string[];
+  changedArtifactIds: string[];
   rejectedFixes: { fix: string; reason: string }[];
   createdAt: string;
 };
 ```
 
-## 8. Revalidation
+## Re-validation
 
-Postprocess output must be revalidated.
-
-If it still fails:
-
-```text
-try another allowed postprocess only if safe
-otherwise regenerate page with stricter prompt if retry remains
-otherwise fail with diagnostics
-```
+Postprocess is not complete until the updated HTML passes both static and Chrome DevTools MCP runtime validation.

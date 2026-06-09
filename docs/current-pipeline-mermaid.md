@@ -1,27 +1,19 @@
 # Current Pipeline Mermaid
 
-This document shows the current intended pipeline at a high level.
+This document shows the current default pipeline at a high level.
 
-For detailed stage rules, read:
+The default blueprint path remains deterministic after first-pass generation. Stitch HTML generation now adds Chrome DevTools MCP runtime validation before React handoff.
 
-```text
-docs/productblueprintv1-generation-pipeline-design.md
-docs/stitch-html-generation-pipeline-design.md
-docs/stitch-ui-constraints-yaml-design.md
-docs/stitch-html-validation-design.md
-docs/stitch-html-postprocess-design.md
-```
-
-## End-to-end pipeline
+## Full Default Pipeline
 
 ```mermaid
 flowchart TD
-  A["User one-shot input"] --> B["Generate ProductBlueprintV1"]
-  B --> C["Deterministic blueprint validation"]
+  A["One-shot raw input"] --> B["Generate ProductBlueprintV1"]
+  B --> C["Deterministic validation"]
   C --> D{"Valid?"}
-  D -->|No| E["Deterministic blueprint repair"]
+  D -->|No| E["Local deterministic repair"]
   E --> C
-  D -->|Yes| F["Local code-verifiable quality checks"]
+  D -->|Yes| F["Local static quality checks"]
   F --> G{"Freeze eligible?"}
   G -->|No| Z["Fail with diagnostics"]
   G -->|Yes| H["Freeze ProductBlueprintV1"]
@@ -29,84 +21,41 @@ flowchart TD
   H --> I["Build Stitch prompt plan"]
   I --> J["Build page-level Stitch prompts"]
   J --> K["Generate Stitch HTML per page"]
-  K --> L["Single-page HTML validation"]
-  L --> M{"Code-fixable?"}
-  M -->|Yes| N["Codex SDK HTML postprocess"]
-  N --> L
-  M -->|No and retry left| O["Regenerate page with stricter prompt"]
-  O --> K
-  M -->|No retry left| Z
-  L -->|Passed| P["Cross-page validation"]
-  P --> Q{"Cross-page valid?"}
-  Q -->|No and code-fixable| R["Codex SDK cross-page postprocess"]
-  R --> P
-  Q -->|No and not fixable| Z
-  Q -->|Yes| S["Capture screenshots"]
-  S --> T["React handoff"]
+  K --> L["Static HTML validation"]
+  L --> M["Chrome DevTools MCP runtime validation"]
+  M --> N["Cross-page navigation/sidebar validation"]
+  N --> O{"HTML valid?"}
+  O -->|Yes| P["Capture screenshots"]
+  P --> Q["React handoff"]
+  O -->|Code-fixable| R["Codex SDK HTML postprocess"]
+  R --> L
+  O -->|Not code-fixable| S["Regenerate page from frozen PageContract"]
+  S --> K
+  O -->|Attempts exhausted| Z
 ```
 
-## Default blueprint pipeline
+## Stitch HTML Runtime Validation Detail
 
 ```mermaid
 flowchart TD
-  A["rawInput"] --> B["input_understanding"]
-  B --> C["product_frame"]
-  C --> D["domain_modeling"]
-  D --> E["flow_modeling"]
-  E --> F["domain_flow_consistency gate"]
-  F --> G["ui_modeling"]
-  G --> H["flow_ui_coverage gate"]
-  H --> I["policy_uncertainty"]
-  I --> J["blueprint_assembly"]
-  J --> K["validateBlueprint"]
-  K --> L{"Validation failure?"}
-  L -->|Yes| M["repairBlueprint deterministic local repair"]
-  M --> K
-  L -->|No| N["reviewBlueprintQuality local static checks"]
-  N --> O{"Blocker/high issue?"}
-  O -->|Yes| Z["Fail session"]
-  O -->|No| P["Freeze blueprint"]
+  A["stitch_html artifact"] --> B["Open page in Chrome DevTools MCP"]
+  B --> C["Collect visible DOM, URL, console, resources"]
+  C --> D["Find clickable elements"]
+  D --> E["Click each allowed target"]
+  E --> F{"Meaningful visible effect?"}
+  F -->|No| G["missing_runtime_click_behavior"]
+  F -->|Yes| H["Record interaction evidence"]
+  C --> I["Extract nav/sidebar model"]
+  I --> J["Compare with frozen blueprint and other pages"]
+  J --> K{"Navigation valid?"}
+  K -->|No| L["navigation/sidebar issue"]
+  K -->|Yes| M["Runtime validation passed"]
 ```
 
-## Default Stitch HTML pipeline
+## Default Behavior
 
-```mermaid
-flowchart TD
-  A["Frozen ProductBlueprintV1"] --> B["Build StitchPromptPlan"]
-  B --> C["For each PageContract"]
-  C --> D["Build StitchPagePrompt"]
-  D --> E["Generate Stitch HTML"]
-  E --> F["Validate single-page HTML"]
-  F --> G{"Issues?"}
-  G -->|No| H["Persist validated page"]
-  G -->|Yes and code-fixable| I["Codex SDK postprocess"]
-  I --> F
-  G -->|Yes and not fixable but retry left| J["Regenerate page with stricter prompt"]
-  J --> E
-  G -->|Yes and no retry| Z["Fail with diagnostics"]
-  H --> K{"All pages done?"}
-  K -->|No| C
-  K -->|Yes| L["Cross-page validation"]
-  L --> M{"Sidebar/navigation consistent?"}
-  M -->|No and fixable| N["Normalize sidebar/navigation"]
-  N --> L
-  M -->|No and not fixable| Z
-  M -->|Yes| O["Screenshot + React handoff"]
-```
-
-## Default disabled paths
-
-By default, the pipeline does not run LLM repair.
-
-Disabled unless explicitly experimental:
-
-```text
-flow_quality_review
-ui_contract_review
-semantic_quality_review
-blueprint_repair LLM stage
-quality_repair LLM stage
-LLM HTML patch repair
-```
-
-Default repair is deterministic and code-verifiable.
+- Default blueprint generation does not use LLM repair.
+- Stitch generation is page-by-page from the frozen blueprint.
+- Static HTML validation catches obvious structure issues.
+- Chrome DevTools MCP validates real click behavior, rendered page health, console/runtime errors, and navigation behavior.
+- Codex SDK postprocess may fix code-verifiable HTML issues, then validation must run again.

@@ -2,176 +2,101 @@
 
 ## Purpose
 
-This repository implements a one-shot product-to-Stitch-to-React pipeline.
+This repository implements a one-shot product understanding and generation pipeline.
 
-Codex must treat this file as the repository-level operating guide.
+The system converts one user input into a frozen `ProductBlueprintV1`, then uses that frozen blueprint as the only source of truth for downstream Stitch HTML, screenshots, React, mock data, API, and state-generation work.
 
-## Required reading order
+## Required Reading Order
 
-Read these documents before implementation:
+1. `docs/productblueprintv1-type-definitions.md`
+2. `docs/productblueprintv1-generation-pipeline-design.md`
+3. `docs/stitch-html-generation-pipeline-design.md`
+4. `docs/stitch-ui-constraints-yaml-design.md`
+5. `docs/stitch-html-validation-design.md`
+6. `docs/stitch-html-postprocess-design.md`
+7. `docs/current-pipeline-mermaid.md`
 
-```text
-docs/productblueprintv1-type-definitions.md
-docs/productblueprintv1-generation-pipeline-design.md
-docs/stitch-html-generation-pipeline-design.md
-docs/stitch-ui-constraints-yaml-design.md
-docs/stitch-html-validation-design.md
-docs/stitch-html-postprocess-design.md
-docs/current-pipeline-mermaid.md
-```
+## Non-negotiable Rules
 
-## Non-negotiable rules
+- One user input only.
+- Frozen `ProductBlueprintV1` is the downstream source of truth.
+- Do not generate Stitch or React directly from raw input.
+- Flow modeling happens before page modeling.
+- Main UI must be real HTML, not UI-as-image.
+- Default blueprint repair must be deterministic; do not use LLM repair in the default path.
 
-```text
-One user input only.
-Do not ask follow-up questions.
-Frozen ProductBlueprintV1 is the downstream source of truth.
-Do not reinterpret raw input after freeze.
-Flows come before pages.
-Main UI must be real HTML.
-Default pipeline does not use LLM repair.
-```
-
-## Blueprint generation rules
-
-Generate the blueprint through explicit artifacts:
-
-```text
-input_understanding
-product_frame
-domain_modeling
-flow_modeling
-ui_modeling
-policy_uncertainty
-blueprint_assembly
-```
-
-Use code for:
-
-```text
-schema validation
-reference validation
-policy invariants
-flow completeness
-UI contract completeness
-deterministic repair
-freeze eligibility
-```
-
-Default repair is deterministic only.
-
-Do not route vague semantic preferences into LLM repair.
-
-## Stitch generation rules
+## Stitch HTML Rules
 
 Stitch generation starts only after blueprint freeze.
 
-Correct:
-
 ```text
-frozen ProductBlueprintV1 -> PageContract -> Stitch prompt -> Stitch HTML
+frozen ProductBlueprintV1
+  -> PageContract
+  -> Stitch prompt
+  -> Stitch HTML
+  -> static validation
+  -> Chrome DevTools MCP runtime validation
+  -> Codex SDK postprocess when code-fixable
+  -> re-validation
+  -> screenshot
+  -> React handoff
 ```
 
-Incorrect:
+## Chrome DevTools MCP Runtime Validation
+
+Codex must use Chrome DevTools MCP, or a compatible runtime validation backend, for checks that static HTML parsing cannot prove.
+
+Required runtime checks:
 
 ```text
-raw input -> Stitch prompt
-raw input -> HTML
+page is not blank
+main content is visible
+console has no blocking runtime errors
+resources are not broken in a UI-blocking way
+every clickable element has a meaningful visible effect
+navigation targets are declared
+sidebars/global navigation are consistent across pages
 ```
 
-Generate page by page.
-
-Each prompt must be derived from a PageContract.
-
-## Stitch UI constraints
-
-Use:
+A clickable element passes only if runtime validation observes a meaningful visible effect:
 
 ```text
-src/stitch/constraints/stitch-ui-constraints.yaml
+modal opens
+drawer opens
+panel toggles
+toast appears
+inline feedback appears
+form submits/resets
+route changes to declared page
+declared tab switches
 ```
 
-Do not use app archetype as the YAML organizing model.
+Focus, hover, active styling, or color-only changes do not count.
 
-The YAML is a small behavior constraint library for:
+## Codex SDK Postprocess
 
-```text
-real HTML
-real click behavior
-no invented navigation
-consistent sidebar
-safe Codex SDK postprocess
-bounded regeneration
-```
+Codex SDK may fix local, code-verifiable HTML issues using validation evidence.
 
-## Click behavior rule
-
-Every clickable element must have a visible effect.
-
-Valid effects include:
+Allowed fixes:
 
 ```text
-open modal
-open drawer
-toggle panel
-show toast
-show inline feedback
-submit form
-reset form
-navigate to declared page
-switch declared tab
-```
-
-Hover, focus, highlight, or color change alone is not enough.
-
-## Navigation and sidebar rules
-
-Do not invent global navigation.
-
-If a sidebar appears across pages, labels, order, and destinations must remain consistent.
-
-Only active state may differ.
-
-## Codex SDK postprocess rules
-
-Codex SDK may fix local code-verifiable HTML issues.
-
-Allowed examples:
-
-```text
-add modal for unhandled button
-add toast/inline feedback
-add form submit/reset handler
+add modal/toast/drawer/toggle behavior
+add form submit/reset behavior
 normalize sidebar across pages
 remove invented navigation
-convert fake link to button
+convert fake links to buttons
+patch deterministic local script errors
 ```
 
-Postprocess must not:
+Forbidden fixes:
 
 ```text
-change product scope
-add new flows
-add new pages
-add auth/payment/collaboration/integrations
+add new product scope
+add new pages or flows
+add login/payment/collaboration/integrations
 reinterpret raw input
-rewrite the whole page for style reasons
+change the frozen blueprint
+hide validation failures without fixing them
 ```
 
-Every postprocess run must persist a report and must be followed by validation.
-
-## Testing requirements
-
-Add tests for:
-
-```text
-default pipeline does not call LLM repair
-frozen blueprint is required before Stitch generation
-Stitch prompt does not use raw input
-HTML validator flags missing click behavior
-HTML validator flags invented navigation
-cross-page validator flags inconsistent sidebar
-postprocess adds visible behavior to safe unhandled buttons
-postprocess normalizes sidebar from canonical source
-React handoff consumes validated HTML only
-```
+Postprocess must persist a report and must be followed by static and runtime re-validation.

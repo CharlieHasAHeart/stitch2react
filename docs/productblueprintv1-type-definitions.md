@@ -1,175 +1,113 @@
-# ProductBlueprintV1 Type Definitions Overview
+# ProductBlueprintV1 Type Definitions Update
 
-## 1. Purpose
+This short document records downstream type additions needed for Stitch HTML validation with Chrome DevTools MCP.
 
-`ProductBlueprintV1` is the frozen structured contract for downstream Stitch and React generation.
+The core `ProductBlueprintV1` remains the source of truth. Stitch validation types are downstream artifacts and must not alter the frozen blueprint.
 
-This document is intentionally short. Keep detailed implementation types in source code.
-
-## 2. Top-level shape
+## Stitch Artifact Types
 
 ```ts
-export type ProductBlueprintV1 = {
-  meta: BlueprintMeta;
-  input: InputUnderstanding;
-  product: ProductIntent;
-  users: UserModel;
-  domain: DomainModel;
-  flows: FlowModel;
-  ui: UIModel;
-  visualPolicy: VisualPolicy;
-  generationPolicy: GenerationPolicy;
-  uncertainty: UncertaintyModel;
+type StitchArtifactType =
+  | "stitch_prompt_plan"
+  | "stitch_page_prompt"
+  | "stitch_html"
+  | "stitch_screenshot"
+  | "stitch_html_validation_report"
+  | "stitch_html_postprocess_report"
+  | "stitch_runtime_validation_evidence";
+```
+
+## Runtime Validation Evidence
+
+```ts
+type StitchValidationBackend = "static" | "chrome_devtools_mcp";
+
+type StitchRuntimeValidationEvidence = {
+  id: string;
+  backend: StitchValidationBackend;
+  sessionId: string;
+  blueprintId: string;
+  pageId: string;
+  selector?: string;
+  elementText?: string;
+  action?: "click" | "render" | "navigation" | "sidebar_compare";
+  before?: RuntimeObservation;
+  after?: RuntimeObservation;
+  notes?: string[];
+  createdAt: string;
+};
+
+type RuntimeObservation = {
+  url?: string;
+  visibleTextHash?: string;
+  domHash?: string;
+  screenshotArtifactId?: string;
+  consoleErrors?: string[];
+  visibleStateSummary?: string;
 };
 ```
 
-## 3. Common field wrapper
-
-Important fields should carry source and confidence.
+## Stitch HTML Validation Report
 
 ```ts
-export type FieldSource = "explicit" | "inferred" | "defaulted";
-export type Confidence = "high" | "medium" | "low";
+type StitchHtmlValidationReport = {
+  id: string;
+  sessionId: string;
+  blueprintId: string;
+  pageId?: string;
+  htmlArtifactIds: string[];
+  passed: boolean;
+  issues: StitchHtmlValidationIssue[];
+  evidenceArtifactIds: string[];
+  createdAt: string;
+};
 
-export type Field<T> = {
-  value: T;
-  source: FieldSource;
-  confidence: Confidence;
-  evidence?: string;
-  risk?: string;
+type StitchHtmlValidationIssue = {
+  code:
+    | "html_empty"
+    | "html_missing_visible_root"
+    | "html_missing_heading"
+    | "ui_as_image_violation"
+    | "missing_primary_action"
+    | "missing_runtime_click_behavior"
+    | "click_only_changes_focus_or_hover"
+    | "invented_navigation"
+    | "undeclared_navigation_destination"
+    | "sidebar_inconsistent_across_pages"
+    | "blank_rendered_page"
+    | "blocking_overlay"
+    | "console_runtime_error"
+    | "broken_resource";
+  severity: "error" | "warning";
+  pageId?: string;
+  selector?: string;
+  message: string;
+  suggestedFix?: string;
+  evidenceArtifactIds?: string[];
 };
 ```
 
-## 4. Flow model
-
-Flows are the behavioral source of truth.
+## Postprocess Report
 
 ```ts
-export type FlowModel = {
-  coreUserFlows: CoreUserFlow[];
-  sideEffectFlows: SideEffectFlow[];
-  supportingInteractionFlows: SupportingInteractionFlow[];
-  feedbackFlows: FeedbackFlow[];
-  recoveryFlows: RecoveryFlow[];
-  stateTransitions: StateTransition[];
+type StitchHtmlPostprocessReport = {
+  id: string;
+  sessionId: string;
+  blueprintId: string;
+  pageIds: string[];
+  sourceIssueCodes: string[];
+  appliedFixes: string[];
+  changedArtifactIds: string[];
+  rejectedFixes: {
+    fix: string;
+    reason: string;
+  }[];
+  createdAt: string;
 };
 ```
 
-Every `CoreUserFlow` should include:
+## Type Boundary
 
-```text
-id
-userGoal
-trigger
-steps
-systemEffects
-feedback
-recovery
-completionSignal
-involvedEntityIds
-uiSurfaceIds
-```
-
-## 5. UI model
-
-Pages are generated from flows.
-
-```ts
-export type UIModel = {
-  appStructure: AppStructure;
-  navigation: NavigationModel;
-  pages: PageContract[];
-  globalComponents: GlobalComponent[];
-  responsivePolicy: ResponsivePolicy;
-};
-```
-
-Do not use app archetype as the central constraint model.
-
-Stitch constraints are defined separately in:
-
-```text
-docs/stitch-ui-constraints-yaml-design.md
-```
-
-## 6. Page contract
-
-Each page contract should define:
-
-```text
-id
-name
-route
-purpose
-supportsFlowIds
-sections
-componentRequirements
-primaryAction
-secondaryActions
-states
-feedbackSurfaces
-recoverySurfaces
-readonly
-confirmationOnly
-```
-
-Every clickable action should map to one of:
-
-```text
-declared page navigation
-form submit/reset
-modal/drawer/toggle behavior
-toast or inline feedback
-recovery action
-```
-
-## 7. Generation policy
-
-The generation policy must include:
-
-```text
-no follow-up questions
-conservative MVP behavior
-forbid UI-as-image
-primary action policy
-scope expansion restrictions
-```
-
-## 8. Stitch artifact types
-
-Downstream Stitch generation should persist:
-
-```text
-stitch_prompt_plan
-stitch_page_prompt
-stitch_html
-stitch_html_validation_report
-stitch_cross_page_validation_report
-stitch_html_postprocess_report
-stitch_screenshot
-```
-
-## 9. Validation reports
-
-Validation reports should be explicit and machine-readable.
-
-Important report families:
-
-```text
-ValidationReport
-GateReport
-BlueprintQualityReport
-StitchHtmlValidationReport
-StitchCrossPageValidationReport
-StitchHtmlPostprocessReport
-```
-
-## 10. Immutability rule
-
-After freeze:
-
-```text
-ProductBlueprintV1 is read-only for downstream generation.
-Stitch and React stages may not reinterpret raw input.
-Postprocess may change generated HTML but not the frozen blueprint.
-```
+- Runtime validation evidence and postprocess reports are downstream artifacts.
+- They must reference the frozen `blueprintId`.
+- They must not mutate `ProductBlueprintV1`.

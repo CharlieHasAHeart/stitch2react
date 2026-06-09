@@ -1,177 +1,133 @@
 # Stitch HTML Validation Design
 
-## 1. Purpose
+## Purpose
 
-This document defines deterministic validation for Stitch-generated HTML.
+Validation proves that Stitch HTML is structurally valid, renderable, interactive, and safe for React handoff.
 
-Validation consumes:
-
-```text
-frozen ProductBlueprintV1
-PageContract
-Stitch HTML artifact
-stitch-ui-constraints.yaml
-```
-
-## 2. Single-page validation
-
-Run after each page HTML is generated.
-
-Required issue codes:
+Validation has three layers:
 
 ```text
-html_empty
-html_missing_visible_root
-html_missing_heading
-missing_primary_action
-missing_secondary_action
-missing_feedback_surface
-missing_recovery_surface
-ui_as_image_violation
-missing_click_behavior
-invented_navigation
+static HTML validation
+Chrome DevTools MCP runtime validation
+cross-page navigation/sidebar validation
 ```
 
-## 3. Click behavior validation
+## Static Validation
 
-Every clickable element must produce visible behavior.
-
-Clickable elements:
+Static validation catches obvious source-level issues:
 
 ```text
-button
-a[href]
-[role='button']
-[data-action]
+empty HTML
+missing visible root
+missing heading
+missing primary/secondary action text
+UI-as-image risk
+obvious fake links such as href="#"
+invented navigation labels
 ```
 
-Valid behavior:
+## Runtime Validation with Chrome DevTools MCP
+
+Runtime validation opens the generated HTML in Chrome and records evidence.
+
+Required checks:
 
 ```text
-form submit/reset
-modal/drawer/toggle
-toast or inline feedback
-declared page navigation
-declared tab switch
+page renders and is not blank
+main content is visible
+console has no blocking runtime errors
+resources are not broken in a way that hides UI
+clickable elements produce meaningful visible effects
+navigation targets are declared
+modals/toasts/drawers/toggles actually appear when clicked
 ```
 
-Invalid behavior:
+## Click Validation
+
+For each clickable element:
 
 ```text
-href="#"
-javascript:void(0)
-empty onclick
-button without form or handler
-role=button without handler
-visual highlight only
+1. record URL, visible text hash, DOM hash, screenshot when needed
+2. click the element
+3. record URL, visible text hash, DOM hash, screenshot when needed
+4. decide whether a meaningful visible effect occurred
 ```
 
-Issue code:
+Pass examples:
 
 ```text
-missing_click_behavior
+modal appears
+drawer opens
+panel expands/collapses
+toast appears
+inline success/error appears
+form moves to submitted state
+route changes to declared page
+active declared tab changes
 ```
 
-## 4. Invented navigation validation
-
-Generated HTML must not add global navigation absent from the frozen blueprint.
-
-Compare visible navigation labels against:
+Fail examples:
 
 ```text
-blueprint.ui.navigation.globalNavItems
-PageContract primary/secondary actions
-declared page targets
+only focus changed
+only hover/active style changed
+no DOM change
+href="#" does nothing
+link navigates to undeclared page
+button has no form, handler, or data-action
 ```
 
-Issue code:
+Issue codes:
 
 ```text
-invented_navigation
+missing_runtime_click_behavior
+click_only_changes_focus_or_hover
+undeclared_navigation_destination
 ```
 
-Blueprint override rule:
+## Cross-page Validation
+
+After all page HTML artifacts exist, run cross-page checks.
+
+Required checks:
 
 ```text
-If a label appears explicitly in the frozen blueprint, it is allowed.
+sidebar labels match across pages
+sidebar order matches across pages
+sidebar destinations match across pages
+only active state differs
+header/global navigation is consistent when present
 ```
 
-## 5. UI-as-image validation
-
-Primary UI must not be an image.
-
-Flag when the page relies on images but lacks expected real UI elements:
-
-```text
-button
-input
-form
-label
-textarea
-select
-main text sections
-```
-
-Issue code:
-
-```text
-ui_as_image_violation
-```
-
-## 6. Cross-page validation
-
-Run after all page HTML artifacts exist.
-
-Required issue codes:
+Issue codes:
 
 ```text
 sidebar_inconsistent_across_pages
 global_navigation_inconsistent_across_pages
-declared_page_destination_missing
 ```
 
-## 7. Sidebar consistency
+## Evidence
 
-Extract from each page:
+Every runtime issue should include evidence:
 
-```text
-labels
-order
-destinations
-active state
+```ts
+type StitchValidationEvidence = {
+  backend: "chrome_devtools_mcp";
+  pageId: string;
+  selector?: string;
+  elementText?: string;
+  before?: RuntimeObservation;
+  after?: RuntimeObservation;
+  notes?: string[];
+};
 ```
 
-Validation rule:
+## Validation Result
+
+Validation passes only when:
 
 ```text
-labels must match
-order must match
-destinations must match
-only active state may differ
-```
-
-If a canonical sidebar exists in `blueprint.ui.navigation.globalNavItems`, validate against it.
-
-If no canonical source exists, do not invent one.
-
-## 8. Validation output
-
-Persist reports:
-
-```text
-StitchHtmlValidationReport
-StitchCrossPageValidationReport
-```
-
-Reports must include:
-
-```text
-id
-sessionId
-blueprintId
-pageId or pageIds
-htmlArtifactId or htmlArtifactIds
-passed
-issues
-createdAt
+static validation passes
+runtime validation passes
+cross-page validation passes, when multiple pages exist
 ```

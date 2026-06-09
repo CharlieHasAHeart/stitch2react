@@ -1,162 +1,90 @@
 # Stitch HTML Generation Pipeline Design
 
-## 1. Purpose
+## Purpose
 
-This document defines how a frozen `ProductBlueprintV1` becomes Stitch HTML artifacts.
+This pipeline converts a frozen `ProductBlueprintV1` into validated Stitch HTML artifacts and screenshots for React handoff.
 
-Detailed YAML, validation, and postprocess rules live in separate short docs:
-
-```text
-docs/stitch-ui-constraints-yaml-design.md
-docs/stitch-html-validation-design.md
-docs/stitch-html-postprocess-design.md
-```
-
-## 2. Core rules
-
-```text
-Use frozen ProductBlueprintV1 only.
-Do not reinterpret raw input.
-Generate page by page.
-Every Stitch prompt is derived from a PageContract.
-Generated UI must be real HTML.
-Every clickable element must have visible behavior.
-Cross-page navigation/sidebar must be consistent.
-```
-
-## 3. Pipeline
+## Default Pipeline
 
 ```text
 frozen ProductBlueprintV1
-  -> build StitchPromptPlan
-  -> build StitchPagePrompt for each PageContract
-  -> generate Stitch HTML per page
-  -> run single-page HTML validation
-  -> run Codex SDK postprocess when code-fixable
-  -> revalidate
-  -> run cross-page validation
-  -> run cross-page postprocess when code-fixable
-  -> capture screenshots
-  -> handoff to React generation
+  -> Stitch prompt plan
+  -> page-level Stitch prompts
+  -> page-level Stitch HTML
+  -> static HTML validation
+  -> Chrome DevTools MCP runtime validation
+  -> cross-page navigation/sidebar validation
+  -> Codex SDK postprocess when code-fixable
+  -> re-validation
+  -> screenshots
+  -> React handoff
 ```
 
-## 4. Stitch prompt plan
+## Source of Truth
 
-The prompt plan is deterministic.
+Stitch generation must consume only the frozen blueprint.
 
-It defines:
+Do not use raw user input to generate or repair Stitch HTML.
+
+## Page-by-page Generation
+
+Default Stitch generation is page-level:
 
 ```text
-which pages to generate
-which flows each page supports
-which actions must appear
-which states must appear
-which feedback/recovery surfaces must exist
-which cross-page navigation model is expected
+one PageContract -> one Stitch prompt -> one Stitch HTML artifact
 ```
 
-## 5. Page prompt contract
+This keeps validation and postprocess scoped and traceable.
 
-Each page prompt must include:
+## Runtime Validation Requirement
+
+Chrome DevTools MCP is required for runtime checks that static parsing cannot prove:
 
 ```text
-product context
-page purpose
-supported flow ids
-primary action
-secondary actions
-required sections
-required components
-states
-feedback surfaces
-recovery surfaces
-completion signals
-global UI constraints from stitch-ui-constraints.yaml
+real click behavior
+rendered page is not blank
+console/runtime errors
+broken resources
+modal/toast/drawer/toggle behavior
+navigation destination validity
+cross-page sidebar consistency
 ```
 
-Do not dump the full YAML into the prompt. Inject only relevant concise rules.
+A clickable element passes only when runtime validation observes a meaningful visible effect.
 
-## 6. HTML validation
+Focus, hover, color change, or active style alone does not count.
 
-Validation is deterministic.
+## Codex SDK Postprocess
 
-Single-page checks include:
-
-```text
-empty HTML
-missing visible root
-missing heading
-missing primary/secondary action
-missing feedback/recovery surface
-UI-as-image violation
-missing click behavior
-invented navigation
-```
-
-Cross-page checks include:
-
-```text
-sidebar labels/order/destinations consistency
-global navigation consistency
-declared page destination validity
-```
-
-## 7. Codex SDK postprocess
-
-Codex SDK may locally fix code-verifiable HTML issues.
+Codex SDK may perform local deterministic HTML fixes when validation evidence is clear.
 
 Allowed examples:
 
 ```text
-add modal behavior to unhandled button
-add toast or inline feedback behavior
+add modal behavior to an unhandled button
+add toast or inline feedback for feedback actions
 add form submit/reset behavior
-normalize sidebar across pages
+normalize sidebars across pages
 remove invented navigation
-convert fake links to buttons
+convert fake links to local buttons
 ```
 
-Postprocess must produce a report and must be followed by revalidation.
+Postprocess must write a report and must be followed by static and runtime re-validation.
 
-## 8. Regeneration
+## Regeneration Policy
 
-If validation fails and postprocess cannot safely fix the page, regenerate that page using:
+If postprocess cannot safely fix the issue, regenerate the affected page from the same frozen PageContract using stricter prompt rules derived from validation issue codes.
 
-```text
-same frozen blueprint
-same PageContract
-same page id
-stricter prompt rules by issue code
-```
+Do not ask an LLM to patch the existing HTML in the default path.
 
-Do not regenerate from raw input.
-
-Do not ask an LLM to patch existing HTML in the default path.
-
-## 9. Artifacts
-
-Persist:
-
-```text
-stitch_prompt_plan
-stitch_page_prompt
-stitch_html
-stitch_html_validation_report
-stitch_cross_page_validation_report
-stitch_html_postprocess_report
-stitch_screenshot
-```
-
-## 10. React handoff
+## React Handoff
 
 React generation consumes:
 
 ```text
 frozen ProductBlueprintV1
 validated Stitch HTML
-optional screenshot
-validation reports
+runtime validation reports
 postprocess reports
+screenshots, when available
 ```
-
-React generation must preserve visible structure, actions, states, feedback, recovery, and completion signals.

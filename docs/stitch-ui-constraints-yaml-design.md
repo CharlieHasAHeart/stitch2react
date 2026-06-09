@@ -1,78 +1,18 @@
 # stitch-ui-constraints.yaml Design
 
-## 1. Purpose
+## Purpose
 
-`stitch-ui-constraints.yaml` is a small UI behavior constraint library for Stitch HTML generation.
+`stitch-ui-constraints.yaml` is a small, reusable UI behavior constraint file for Stitch HTML generation and validation.
 
-It is not an app archetype library.
+It is not an archetype library and must not be organized by app type.
 
-Do not organize it by software type, product type, or app type.
-
-## 2. What it controls
-
-The YAML controls only universal, code-verifiable UI behavior rules:
-
-```text
-real HTML
-real click behavior
-no invented navigation
-consistent sidebar
-safe Codex SDK postprocess
-bounded regeneration
-```
-
-## 3. Recommended file path
-
-```text
-src/stitch/constraints/stitch-ui-constraints.yaml
-```
-
-## 4. Minimal YAML shape
+## Minimal Shape
 
 ```yaml
 version: 1
 
 promptRules:
   global: []
-
-html:
-  requireVisibleRoot: true
-  requireHeading: true
-  forbidPrimaryUiAsImage: true
-
-interaction:
-  requireVisibleBehaviorForClickableElements: true
-  clickableSelectors: []
-  allowedVisibleBehaviors: []
-  forbiddenNoopPatterns: []
-
-navigation:
-  allowInventedGlobalNavigation: false
-  forbiddenInventedLabels: []
-  sidebar:
-    ifPresentMustBeConsistentAcrossPages: true
-    canonicalSource: "blueprint.ui.navigation.globalNavItems"
-    allowOnlyActiveStateDifference: true
-
-postprocess:
-  codexAllowedFixes: []
-
-regeneration:
-  stricterPromptRulesByIssueCode: {}
-```
-
-## 5. Initial recommended content
-
-```yaml
-version: 1
-
-promptRules:
-  global:
-    - "Use real HTML elements for all primary UI."
-    - "Every clickable element must produce a visible interaction."
-    - "Do not create decorative-only buttons or links."
-    - "Do not invent navigation, pages, support links, legal links, authentication, payment, collaboration, dashboards, or integrations unless present in the frozen blueprint."
-    - "If a sidebar appears on multiple pages, keep its labels, order, and destinations identical across pages."
 
 html:
   requireVisibleRoot: true
@@ -97,8 +37,8 @@ interaction:
     - "navigate_to_declared_page"
     - "switch_declared_tab"
   forbiddenNoopPatterns:
-    - "href=#"
-    - "javascript:void(0)"
+    - "href=\"#\""
+    - "href=\"javascript:void(0)\""
     - "empty_onclick"
     - "button_without_form_or_handler"
 
@@ -108,19 +48,11 @@ navigation:
     - "dashboard"
     - "history"
     - "support"
-    - "my quotes"
     - "privacy policy"
     - "terms of service"
     - "contact"
     - "login"
     - "settings"
-    - "仪表盘"
-    - "历史"
-    - "支持"
-    - "我的报价"
-    - "隐私政策"
-    - "使用条款"
-    - "联系我们"
   sidebar:
     ifPresentMustBeConsistentAcrossPages: true
     canonicalSource: "blueprint.ui.navigation.globalNavItems"
@@ -129,6 +61,23 @@ navigation:
       - "order"
       - "destinations"
     allowOnlyActiveStateDifference: true
+
+runtimeValidation:
+  enabled: true
+  backend: "chrome_devtools_mcp"
+  clickBehavior:
+    requireVisibleDomChange: true
+    ignoreChanges:
+      - "focus"
+      - "hover"
+      - "active_style_only"
+  navigation:
+    validateDeclaredDestinations: true
+  pageHealth:
+    failOnBlankPage: true
+    failOnBlockingOverlay: true
+  console:
+    failOnRuntimeErrors: true
 
 postprocess:
   codexAllowedFixes:
@@ -143,36 +92,41 @@ postprocess:
     - "convert_fake_link_to_button"
 
 regeneration:
-  stricterPromptRulesByIssueCode:
-    missing_click_behavior:
-      - "Every button, link, and role=button element must visibly change page state."
-      - "Hover, focus, highlight, or color change alone is not enough."
-    invented_navigation:
-      - "Remove navigation labels that are not present in the frozen blueprint."
-    sidebar_inconsistent_across_pages:
-      - "Use the same sidebar labels, order, and destinations on every page."
-    ui_as_image_violation:
-      - "Render forms, buttons, cards, navigation, labels, and important text as real HTML."
+  stricterPromptRulesByIssueCode: {}
 ```
 
-## 6. Consumption rules
+## Runtime Validation Semantics
 
-The YAML is consumed by:
+`runtimeValidation.backend = chrome_devtools_mcp` means validation must render HTML in a real browser before React handoff.
+
+Use runtime validation for:
 
 ```text
-Stitch prompt builder
-single-page HTML validator
-cross-page validator
-Codex SDK postprocessor
-regeneration prompt builder
+click behavior
+navigation behavior
+sidebar consistency
+blank page detection
+blocking overlay detection
+console/runtime errors
+broken resources
 ```
 
-Do not dump the entire YAML into prompts.
+## Click Rule
 
-Inject concise relevant rules.
+Every clickable element must produce a meaningful visible effect.
 
-## 7. Blueprint override rule
+Allowed effects include:
 
-If a forbidden label is explicitly present in the frozen blueprint, it is allowed.
+```text
+modal, drawer, panel toggle, toast, inline feedback, form submit/reset, declared page navigation, declared tab switch
+```
 
-The YAML may guard against hallucinated UI, but it may not override explicit blueprint content.
+Focus, hover, active styling, or color-only changes do not count.
+
+## Navigation Rule
+
+Do not invent global navigation. Navigation labels and destinations must come from the frozen blueprint or declared PageContract actions.
+
+## Sidebar Rule
+
+If multiple pages contain a sidebar, labels, order, and destinations must match across pages. Only active state may differ.
