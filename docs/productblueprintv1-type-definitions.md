@@ -67,7 +67,6 @@ type StitchHtmlValidationIssue = {
     | "html_empty"
     | "html_missing_visible_root"
     | "html_missing_heading"
-    | "ui_as_image_violation"
     | "missing_primary_action"
     | "missing_runtime_click_behavior"
     | "click_only_changes_focus_or_hover"

@@ -2,49 +2,33 @@
 
 ## Purpose
 
-Codex SDK postprocess fixes local, code-verifiable HTML issues after validation.
+Codex SDK postprocess applies deterministic local fixes to Stitch-generated HTML.
 
-It is not LLM repair and must not rewrite the product.
+It uses static and Chrome DevTools MCP runtime validation reports as evidence.
 
-## Inputs
+Postprocess is not LLM repair.
 
-```text
-frozen ProductBlueprintV1
-Stitch HTML artifacts
-static validation report
-Chrome DevTools MCP runtime evidence
-stitch-ui-constraints.yaml
-```
-
-## Postprocess Flow
+## Pipeline position
 
 ```text
-validation issue
-  -> check if issue is code-fixable
-  -> apply allowed Codex SDK fix
-  -> persist postprocess report
-  -> re-run static validation
-  -> re-run Chrome DevTools MCP runtime validation
+Stitch HTML
+  -> static validation
+  -> Chrome DevTools MCP runtime validation
+  -> Codex SDK postprocess when code-fixable
+  -> re-validation
+  -> screenshot
+  -> React handoff
 ```
 
-## Runtime Evidence Driven Fixes
+## Allowed fixes
 
-Use MCP evidence to decide exact fixes.
+Codex SDK may apply only local, deterministic fixes.
 
-Examples:
-
-```text
-missing_runtime_click_behavior -> add modal/toast/toggle/form handler
-click_only_changes_focus_or_hover -> replace decorative behavior with visible state change
-sidebar_inconsistent_across_pages -> normalize sidebar from canonical blueprint navigation
-undeclared_navigation_destination -> remove link or convert to local button
-console_runtime_error -> patch local deterministic script error
-```
-
-## Allowed Fixes
+Allowed examples:
 
 ```text
 add_modal_for_unhandled_button
+add_drawer_for_secondary_details
 add_toast_for_feedback_action
 add_inline_error_or_success_state
 add_form_submit_handler
@@ -56,32 +40,37 @@ convert_fake_link_to_button
 add_data_action_attributes
 ```
 
-## Forbidden Fixes
+## Disallowed fixes
 
-Codex SDK postprocess must not:
+Codex SDK must not:
 
 ```text
-add new pages
-add new flows
-add login/payment/collaboration/integration scope
 reinterpret raw input
-rewrite entire page for style
-change the frozen blueprint
-hide validation failures without fixing them
+change product scope
+add new user flows
+add new pages
+add authentication
+add payments
+add collaboration features
+add integrations
+rewrite the whole page for style preference
 ```
 
-## Sidebar Normalization
+## Runtime-evidence-driven fixes
 
-If sidebars differ across pages, Codex may normalize them using:
+Use validation issue codes to select fixes.
 
 ```text
-blueprint.ui.navigation.globalNavItems
-or declared page routes when the blueprint explicitly supports page navigation
+missing_runtime_click_behavior -> add modal/toast/drawer/toggle/form behavior
+click_only_changes_focus_or_hover -> add visible state change
+sidebar_runtime_inconsistent -> normalize sidebar from canonical navigation model
+invented_navigation -> remove or disable invented navigation
+undeclared_navigation_destination -> remove, disable, or retarget to declared destination
+console_runtime_error -> patch only when local and deterministic
+broken_resource -> patch only when local and deterministic
 ```
 
-Labels, order, and destinations must match. Active state may differ.
-
-## Report
+## Postprocess report
 
 Every postprocess run must persist:
 
@@ -93,12 +82,25 @@ type StitchHtmlPostprocessReport = {
   pageIds: string[];
   sourceIssueCodes: string[];
   appliedFixes: string[];
-  changedArtifactIds: string[];
-  rejectedFixes: { fix: string; reason: string }[];
+  changedArtifacts: string[];
+  rejectedFixes: {
+    fix: string;
+    reason: string;
+  }[];
   createdAt: string;
 };
 ```
 
 ## Re-validation
 
-Postprocess is not complete until the updated HTML passes both static and Chrome DevTools MCP runtime validation.
+After postprocess, re-run:
+
+```text
+static validation
+Chrome DevTools MCP runtime validation
+cross-page navigation/sidebar validation
+```
+
+If the same issue remains, do not loop indefinitely.
+
+Regenerate from the frozen `PageContract` when the retry budget allows.

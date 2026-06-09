@@ -79,3 +79,22 @@ completion signals
 visualPolicy.imageUsage.forbidUiAsImage
 generationPolicy.stitchGenerationRules
 ```
+
+---
+
+## Downstream Stitch validation note
+
+After blueprint freeze, Stitch generation and validation are governed by the Stitch documentation.
+
+The blueprint pipeline does not validate runtime HTML behavior.
+
+Downstream Stitch validation should use:
+
+```text
+static HTML validation
+Chrome DevTools MCP runtime validation
+Codex SDK deterministic postprocess
+cross-page navigation/sidebar validation
+```
+
+The frozen blueprint remains the source of truth.

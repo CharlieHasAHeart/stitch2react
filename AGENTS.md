@@ -22,7 +22,6 @@ The system converts one user input into a frozen `ProductBlueprintV1`, then uses
 - Frozen `ProductBlueprintV1` is the downstream source of truth.
 - Do not generate Stitch or React directly from raw input.
 - Flow modeling happens before page modeling.
-- Main UI must be real HTML, not UI-as-image.
 - Default blueprint repair must be deterministic; do not use LLM repair in the default path.
 
 ## Stitch HTML Rules
