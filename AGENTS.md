@@ -8,13 +8,9 @@ The system converts one user input into a frozen `ProductBlueprintV1`, then uses
 
 ## Required Reading Order
 
-1. `docs/productblueprintv1-type-definitions.md`
-2. `docs/productblueprintv1-generation-pipeline-design.md`
-3. `docs/stitch-html-generation-pipeline-design.md`
-4. `docs/stitch-ui-constraints-yaml-design.md`
-5. `docs/stitch-html-validation-design.md`
-6. `docs/stitch-html-postprocess-design.md`
-7. `docs/current-pipeline-mermaid.md`
+1. `docs/blueprint-stage.md`
+2. `docs/stitch2html-stage.md`
+3. `docs/validation-repair-stage.md`
 
 ## Non-negotiable Rules
 
