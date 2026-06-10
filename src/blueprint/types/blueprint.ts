@@ -258,11 +258,6 @@ export type PageContract = {
   confirmationOnly: boolean;
 };
 
-export type AppStructure = {
-  shell: "single_page" | "dashboard" | "wizard";
-  pageOrder: string[];
-};
-
 export type NavigationModel = {
   type: "minimal" | "top_nav" | "sidebar";
   globalNavItems: string[];
@@ -280,7 +275,6 @@ export type ResponsivePolicy = {
 };
 
 export type UIModel = {
-  appStructure: AppStructure;
   navigation: NavigationModel;
   pages: PageContract[];
   globalComponents: GlobalComponent[];
@@ -291,7 +285,6 @@ export type VisualPolicy = {
   imageUsage: {
     allowDecorativeBackgrounds: boolean;
     allowContentImages: boolean;
-    forbidUiAsImage: true;
     maxSingleImageDominanceRatio: number;
     decorativeImageGuidance: string;
     forbiddenImageUses: string[];
@@ -335,7 +328,6 @@ export type GenerationPolicy = {
 export type GlobalGenerationPolicySeed = {
   noFollowUpQuestions: true;
   assumptionStrategy: "conservative_mvp";
-  forbidUiAsImage: true;
   explicitBeatsInferred: true;
   doNotExpandScope: true;
 };
@@ -445,17 +437,18 @@ export type ArtifactType =
   | "validation_report"
   | "quality_review_report"
   | "repair_plan"
+  | "repair_provenance"
   | "repair_guard_report"
   | "quality_repair_candidate"
   | "stitch_prompt_plan"
   | "stitch_page_prompt"
   | "stitch_html"
-  | "stitch_screenshot"
   | "stitch_html_validation_report"
   | "stitch_runtime_validation_report"
   | "stitch_cross_page_validation_report"
   | "stitch_html_postprocess_report"
   | "validated_stitch_artifact_gate_report"
+  | "stitch_final_validation_gate_report"
   | "stitch_page_generation_report";
 
 export type BlueprintVersionStatus =
@@ -565,7 +558,6 @@ export type ValidationReport = {
 
 export type BlueprintQualityIssueSeverity = "blocker" | "high" | "medium" | "low";
 export type BlueprintQualityIssueCode =
-  | "app_structure_mismatch"
   | "explicit_outcome_weakened"
   | "primary_action_policy_weak"
   | "missing_result_page_action"
@@ -601,15 +593,19 @@ export type RepairRoute =
   | "code_schema_repair"
   | "code_reference_repair"
   | "code_policy_repair"
-  | "llm_semantic_local_repair"
-  | "quality_repair"
+  | "deterministic_local_quality_repair"
+  | "llm_blueprint_repair"
+  | "llm_quality_repair"
   | "manual_blocking_issue";
+
+export type RepairPathMode = "default_deterministic" | "experimental_llm";
 
 export type RepairPlan = {
   id: string;
   sessionId: string;
   blueprintId: string;
   route: RepairRoute;
+  pathMode: RepairPathMode;
   source: "gate_report" | "validation_report" | "quality_review_report";
   sourceReportId?: string;
   sourceGate?: PipelineGate;
@@ -622,6 +618,27 @@ export type RepairPlan = {
   requiresReviewAfterRepair: boolean;
   rationale: string;
   maxAttempts: number;
+  createdAt: string;
+};
+
+export type RepairProvenanceSource =
+  | "deterministic_local_repair"
+  | "deterministic_local_quality_repair"
+  | "llm_blueprint_repair"
+  | "llm_quality_repair";
+
+export type RepairProvenance = {
+  id: string;
+  sessionId: string;
+  blueprintId: string;
+  repairPlanId: string;
+  route: RepairRoute;
+  pathMode: RepairPathMode;
+  source: RepairProvenanceSource;
+  inputArtifactId: string;
+  outputArtifactId: string;
+  guardReportId?: string;
+  notes: string[];
   createdAt: string;
 };
 
@@ -685,7 +702,7 @@ export type StitchHtmlValidationIssue = {
 };
 
 export type StitchRuntimeValidationEvidence = {
-  backend: "chrome_devtools_mcp" | "stub_runtime_validator";
+  backend: "chrome_headless_cdp";
   pageId: string;
   selector?: string;
   text?: string;
@@ -693,13 +710,11 @@ export type StitchRuntimeValidationEvidence = {
     url?: string;
     visibleTextHash?: string;
     domHash?: string;
-    screenshotArtifactId?: string;
   };
   after?: {
     url?: string;
     visibleTextHash?: string;
     domHash?: string;
-    screenshotArtifactId?: string;
   };
   notes?: string[];
 };
@@ -732,10 +747,12 @@ export type StitchCrossPageValidationReport = {
   id: string;
   sessionId: string;
   blueprintId: string;
+  kind: "static" | "runtime";
   pageIds: string[];
   htmlArtifactIds: string[];
   passed: boolean;
   issues: StitchHtmlValidationIssue[];
+  runtimeEvidence?: StitchRuntimeValidationEvidence[];
   createdAt: string;
 };
 
@@ -763,6 +780,42 @@ export type ValidatedStitchArtifactGateReport = {
   createdAt: string;
 };
 
+export type StitchFinalValidationGateReport = {
+  id: string;
+  sessionId: string;
+  blueprintId: string;
+  passed: boolean;
+  pageResults: Array<{
+    pageId: string;
+    route: string;
+    htmlArtifactId: string;
+    validationReportId?: string;
+    runtimeValidationReportId?: string;
+    postprocessReportId?: string;
+    pagePassedBeforeCrossPage: boolean;
+    pagePassedFinal: boolean;
+    blockingIssueCodes: string[];
+    blockingIssueSources: Array<"static_html" | "runtime" | "postprocess_revalidation" | "cross_page" | "runtime_backend">;
+  }>;
+  crossPageValidationReportId?: string;
+  runtimeBackendSummary: {
+    requiredAuthority: "authoritative" | "heuristic_fallback_allowed";
+    observedBackends: string[];
+    observedAuthorities: string[];
+    passedAuthorityGate: boolean;
+  };
+  postprocessSummary: {
+    attempted: boolean;
+    appliedFixes: string[];
+    rejectedFixes: Array<{
+      fix: string;
+      reason: string;
+    }>;
+  };
+  terminalFailureReason?: string;
+  createdAt: string;
+};
+
 export type StitchPageGenerationReport = {
   id: string;
   sessionId: string;
@@ -770,7 +823,6 @@ export type StitchPageGenerationReport = {
   pageId: string;
   promptArtifactId: string;
   htmlArtifactId?: string;
-  screenshotArtifactId?: string;
   validationReportId: string;
   status: "generated" | "validated" | "failed";
   createdAt: string;
@@ -782,7 +834,6 @@ export type StitchPageGenerationResult = {
   pageId: string;
   promptArtifactId: string;
   htmlArtifactId?: string;
-  screenshotArtifactId?: string;
   validationReportId: string;
   status: "generated" | "validated" | "failed";
 };

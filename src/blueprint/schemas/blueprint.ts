@@ -29,7 +29,6 @@ const referenceInputSchema = z.object({
 export const globalGenerationPolicySeedSchema = z.object({
   noFollowUpQuestions: z.literal(true),
   assumptionStrategy: z.literal("conservative_mvp"),
-  forbidUiAsImage: z.literal(true),
   explicitBeatsInferred: z.literal(true),
   doNotExpandScope: z.literal(true)
 });
@@ -251,10 +250,6 @@ const pageContractSchema = z.object({
 export const pageContractSchemaExport = pageContractSchema;
 
 export const uiModelSchema = z.object({
-  appStructure: z.object({
-    shell: z.enum(["single_page", "dashboard", "wizard"]),
-    pageOrder: z.array(z.string())
-  }),
   navigation: z.object({
     type: z.enum(["minimal", "top_nav", "sidebar"]),
     globalNavItems: z.array(z.string())
@@ -277,7 +272,6 @@ export const visualPolicySchema = z.object({
   imageUsage: z.object({
     allowDecorativeBackgrounds: z.boolean(),
     allowContentImages: z.boolean(),
-    forbidUiAsImage: z.literal(true),
     maxSingleImageDominanceRatio: z.number(),
     decorativeImageGuidance: z.string(),
     forbiddenImageUses: z.array(z.string())
@@ -433,7 +427,6 @@ export const validationReportSchema = z.object({
 export const blueprintQualityIssueSchema = z.object({
   severity: z.enum(["blocker", "high", "medium", "low"]),
   code: z.enum([
-    "app_structure_mismatch",
     "explicit_outcome_weakened",
     "primary_action_policy_weak",
     "missing_result_page_action",
@@ -470,10 +463,12 @@ export const repairPlanSchema = z.object({
     "code_schema_repair",
     "code_reference_repair",
     "code_policy_repair",
-    "llm_semantic_local_repair",
-    "quality_repair",
+    "deterministic_local_quality_repair",
+    "llm_blueprint_repair",
+    "llm_quality_repair",
     "manual_blocking_issue"
   ]),
+  pathMode: z.enum(["default_deterministic", "experimental_llm"]),
   source: z.enum(["gate_report", "validation_report", "quality_review_report"]),
   sourceReportId: z.string().optional(),
   sourceGate: z
@@ -521,6 +516,35 @@ export const repairPlanSchema = z.object({
   requiresReviewAfterRepair: z.boolean(),
   rationale: z.string(),
   maxAttempts: z.number().int().positive(),
+  createdAt: z.string()
+});
+
+export const repairProvenanceSchema = z.object({
+  id: z.string(),
+  sessionId: z.string(),
+  blueprintId: z.string(),
+  repairPlanId: z.string(),
+  route: z.enum([
+    "no_repair_needed",
+    "code_schema_repair",
+    "code_reference_repair",
+    "code_policy_repair",
+    "deterministic_local_quality_repair",
+    "llm_blueprint_repair",
+    "llm_quality_repair",
+    "manual_blocking_issue"
+  ]),
+  pathMode: z.enum(["default_deterministic", "experimental_llm"]),
+  source: z.enum([
+    "deterministic_local_repair",
+    "deterministic_local_quality_repair",
+    "llm_blueprint_repair",
+    "llm_quality_repair"
+  ]),
+  inputArtifactId: z.string(),
+  outputArtifactId: z.string(),
+  guardReportId: z.string().optional(),
+  notes: z.array(z.string()),
   createdAt: z.string()
 });
 
@@ -601,16 +625,36 @@ export const stitchPagePromptArtifactSchema = z.object({
   createdAt: z.string()
 });
 
+export const stitchHtmlValidationIssueCodeSchema = z.enum([
+  "html_empty",
+  "html_missing_visible_root",
+  "html_missing_page_root_marker",
+  "html_missing_heading",
+  "missing_primary_action",
+  "missing_secondary_action",
+  "missing_feedback_surface",
+  "missing_recovery_surface",
+  "invented_navigation",
+  "undeclared_navigation_destination",
+  "blank_rendered_page",
+  "blocking_overlay",
+  "missing_runtime_click_behavior",
+  "click_only_changes_focus_or_hover",
+  "console_runtime_error",
+  "broken_resource",
+  "sidebar_inconsistent_across_pages"
+]);
+
 export const stitchHtmlValidationIssueSchema = z.object({
   severity: z.enum(["error", "warning"]),
-  code: z.string(),
+  code: stitchHtmlValidationIssueCodeSchema,
   message: z.string(),
   path: z.string().optional(),
   suggestedFix: z.string().optional()
 });
 
 export const stitchRuntimeValidationEvidenceSchema = z.object({
-  backend: z.enum(["chrome_devtools_mcp", "stub_runtime_validator"]),
+  backend: z.enum(["chrome_headless_cdp"]),
   pageId: z.string(),
   selector: z.string().optional(),
   text: z.string().optional(),
@@ -618,13 +662,11 @@ export const stitchRuntimeValidationEvidenceSchema = z.object({
     url: z.string().optional(),
     visibleTextHash: z.string().optional(),
     domHash: z.string().optional(),
-    screenshotArtifactId: z.string().optional()
   }).optional(),
   after: z.object({
     url: z.string().optional(),
     visibleTextHash: z.string().optional(),
     domHash: z.string().optional(),
-    screenshotArtifactId: z.string().optional()
   }).optional(),
   notes: z.array(z.string()).optional()
 });
@@ -657,10 +699,12 @@ export const stitchCrossPageValidationReportSchema = z.object({
   id: z.string(),
   sessionId: z.string(),
   blueprintId: z.string(),
+  kind: z.enum(["static", "runtime"]),
   pageIds: z.array(z.string()),
   htmlArtifactIds: z.array(z.string()),
   passed: z.boolean(),
   issues: z.array(stitchHtmlValidationIssueSchema),
+  runtimeEvidence: z.array(stitchRuntimeValidationEvidenceSchema).optional(),
   createdAt: z.string()
 });
 
@@ -693,6 +737,46 @@ export const validatedStitchArtifactGateReportSchema = z.object({
   createdAt: z.string()
 });
 
+export const stitchFinalValidationGateReportSchema = z.object({
+  id: z.string(),
+  sessionId: z.string(),
+  blueprintId: z.string(),
+  passed: z.boolean(),
+  pageResults: z.array(
+    z.object({
+      pageId: z.string(),
+      route: z.string(),
+      htmlArtifactId: z.string(),
+      validationReportId: z.string().optional(),
+      runtimeValidationReportId: z.string().optional(),
+      postprocessReportId: z.string().optional(),
+      pagePassedBeforeCrossPage: z.boolean(),
+      pagePassedFinal: z.boolean(),
+      blockingIssueCodes: z.array(z.string()),
+      blockingIssueSources: z.array(z.enum(["static_html", "runtime", "postprocess_revalidation", "cross_page", "runtime_backend"]))
+    })
+  ),
+  crossPageValidationReportId: z.string().optional(),
+  runtimeBackendSummary: z.object({
+    requiredAuthority: z.enum(["authoritative", "heuristic_fallback_allowed"]),
+    observedBackends: z.array(z.string()),
+    observedAuthorities: z.array(z.string()),
+    passedAuthorityGate: z.boolean()
+  }),
+  postprocessSummary: z.object({
+    attempted: z.boolean(),
+    appliedFixes: z.array(z.string()),
+    rejectedFixes: z.array(
+      z.object({
+        fix: z.string(),
+        reason: z.string()
+      })
+    )
+  }),
+  terminalFailureReason: z.string().optional(),
+  createdAt: z.string()
+});
+
 export const stitchPageGenerationReportSchema = z.object({
   id: z.string(),
   sessionId: z.string(),
@@ -700,7 +784,6 @@ export const stitchPageGenerationReportSchema = z.object({
   pageId: z.string(),
   promptArtifactId: z.string(),
   htmlArtifactId: z.string().optional(),
-  screenshotArtifactId: z.string().optional(),
   validationReportId: z.string(),
   status: z.enum(["generated", "validated", "failed"]),
   createdAt: z.string()

@@ -2,7 +2,7 @@ import { ZodError } from "zod";
 import {
   BlueprintRepository,
   FileBlueprintStore,
-  generateStitchHtmlFromFrozenBlueprint,
+  generateValidatedStitchBundleFromFrozenBlueprint,
   GoogleStitchSdkStageClient
 } from "../blueprint/index.js";
 import { readStitchEnv } from "../blueprint/shared/env.js";
@@ -29,7 +29,7 @@ async function main(): Promise<void> {
   const repository = new BlueprintRepository(new FileBlueprintStore());
   const latest = repository.requireLatestFrozenBlueprint();
 
-  const result = await generateStitchHtmlFromFrozenBlueprint(
+  const result = await generateValidatedStitchBundleFromFrozenBlueprint(
     {
       sessionId: latest.session.id,
       blueprintId: latest.version.id,

@@ -4,6 +4,7 @@ import type {
   StitchPagePromptArtifact,
   StitchPromptPlanPage
 } from "../../blueprint/types/blueprint.js";
+import { compileStitchPromptConstraints } from "../constraints/compile-stitch-prompt-constraints.js";
 import { loadStitchUiConstraints } from "../constraints/load-stitch-ui-constraints.js";
 
 function nowIso(): string {
@@ -19,23 +20,6 @@ function findSupportedFlowSummaries(blueprint: ProductBlueprintV1, page: PageCon
     });
 }
 
-function buildConstraintLines(frozenBlueprint: ProductBlueprintV1, page: PageContract): string[] {
-  const constraints = loadStitchUiConstraints();
-  const lines = [...constraints.promptRules.global.map((rule) => `- ${rule}`)];
-
-  lines.push(`- navigationType: ${frozenBlueprint.ui.navigation.type}`);
-  lines.push(`- globalNavItems: ${frozenBlueprint.ui.navigation.globalNavItems.join(", ") || "none"}`);
-  lines.push(`- pageRoute: ${page.route}`);
-
-  if (page.primaryAction?.targetPageId || page.secondaryActions.some((action) => action.targetPageId)) {
-    lines.push("- Navigation may only target declared blueprint pages.");
-  } else {
-    lines.push("- Do not invent navigation or global links.");
-  }
-
-  return lines;
-}
-
 export function buildStitchPagePrompt(
   sessionId: string,
   blueprintId: string,
@@ -44,7 +28,8 @@ export function buildStitchPagePrompt(
   page: PageContract
 ): StitchPagePromptArtifact {
   const supportedFlowSummaries = findSupportedFlowSummaries(frozenBlueprint, page);
-  const constraintLines = buildConstraintLines(frozenBlueprint, page);
+  const constraints = loadStitchUiConstraints();
+  const compiledConstraints = compileStitchPromptConstraints({ constraints, frozenBlueprint, page });
 
   const prompt = [
     `Generate a single HTML page for Stitch from the frozen ProductBlueprintV1.`,
@@ -62,8 +47,8 @@ export function buildStitchPagePrompt(
     `- purpose: ${page.purpose}`,
     `- pageRole: ${planPage.pageRole}`,
     `- supportedFlowIds: ${page.supportsFlowIds.join(", ")}`,
-    `- primaryAction: ${page.primaryAction ? page.primaryAction.label : "none"}`,
-    `- secondaryActions: ${page.secondaryActions.map((action) => action.label).join(", ") || "none"}`,
+    `- primaryAction: ${page.primaryAction ? `${page.primaryAction.id}:${page.primaryAction.label}` : "none"}`,
+    `- secondaryActions: ${page.secondaryActions.map((action) => `${action.id}:${action.label}`).join(", ") || "none"}`,
     `- states: ${page.states.map((state) => state.name).join(", ") || "none"}`,
     `- feedbackSurfaces: ${page.feedbackSurfaces.map((surface) => surface.type).join(", ") || "none"}`,
     `- recoverySurfaces: ${page.recoverySurfaces.map((surface) => surface.type).join(", ") || "none"}`,
@@ -71,20 +56,23 @@ export function buildStitchPagePrompt(
     `- componentRequirements: ${page.componentRequirements.map((item) => `${item.type}:${item.purpose}`).join(", ") || "none"}`,
     `- completionSignals: ${supportedFlowSummaries.map((summary) => summary.split("; completion=")[1] ?? "").filter(Boolean).join(", ") || "none"}`,
     ``,
-    `Relevant Stitch UI constraints:`,
-    ...constraintLines,
+    `Global rules:`,
+    ...compiledConstraints.globalRules.map((rule) => `- ${rule}`),
+    ``,
+    `HTML contract:`,
+    ...compiledConstraints.htmlContractRules.map((rule) => `- ${rule}`),
+    ``,
+    `Interaction contract:`,
+    ...compiledConstraints.interactionRules.map((rule) => `- ${rule}`),
+    ``,
+    `Navigation contract:`,
+    ...compiledConstraints.navigationRules.map((rule) => `- ${rule}`),
+    ``,
+    `Forbidden patterns:`,
+    ...compiledConstraints.forbiddenPatterns.map((rule) => `- ${rule}`),
     ``,
     `Flow requirements:`,
     ...supportedFlowSummaries.map((summary) => `- ${summary}`),
-    ``,
-    `Visual and HTML requirements:`,
-    `- Use real HTML elements.`,
-    `- Use real text, real buttons, and real form controls.`,
-    `- Do not embed the primary UI in an image.`,
-    `- Every clickable element must produce a visible interaction.`,
-    `- Hover, focus, highlight, or color change alone is not enough.`,
-    `- Make the page self-contained and editable.`,
-    `- Do not invent new pages, flows, roles, auth, payment, collaboration, or integrations.`,
     ``,
     `Return only the page HTML.`
   ].join("\n");

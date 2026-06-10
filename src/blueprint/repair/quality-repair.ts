@@ -234,12 +234,6 @@ export function repairBlueprintQuality(
 
   for (const issue of report.issues) {
     switch (issue.code) {
-      case "app_structure_mismatch": {
-        if (repaired.ui.appStructure.shell === "wizard") {
-          repaired.ui.appStructure.shell = "single_page";
-        }
-        break;
-      }
       case "explicit_outcome_weakened": {
         softenImmediateQuoteAssumption(repaired);
 

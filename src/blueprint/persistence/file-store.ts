@@ -30,7 +30,8 @@ export type ProjectBundleManifest = {
   blueprintId: string;
   blueprintArtifactId: string;
   blueprintVersion: number;
-  status: "blueprint_frozen" | "stitch_completed";
+  status: "blueprint_frozen" | "stitch_completed" | "stitch_failed";
+  finalValidationGateArtifactPath?: string;
   blueprintJsonPath: string;
   stitchPromptPlanPath?: string;
   pages: Array<{
@@ -38,7 +39,6 @@ export type ProjectBundleManifest = {
     promptArtifactPath?: string;
     htmlArtifactPath?: string;
     htmlFilePath?: string;
-    screenshotArtifactPath?: string;
     validationArtifactPath?: string;
     generationReportPath?: string;
     status?: string;

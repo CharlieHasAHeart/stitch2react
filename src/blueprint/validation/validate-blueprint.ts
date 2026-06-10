@@ -243,16 +243,6 @@ function semanticIssues(blueprint: ProductBlueprintV1): ValidationIssue[] {
     }
   }
 
-  if (blueprint.visualPolicy.imageUsage.forbidUiAsImage !== true) {
-    issues.push(
-      issue(
-        "visual_policy_ui_as_image_forbidden",
-        "visualPolicy.imageUsage.forbidUiAsImage",
-        "visualPolicy.imageUsage.forbidUiAsImage must be true."
-      )
-    );
-  }
-
   if (blueprint.generationPolicy.noFollowUpQuestions !== true) {
     issues.push(
       issue(

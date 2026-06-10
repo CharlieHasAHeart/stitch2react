@@ -4,7 +4,7 @@
 
 This repository implements a one-shot product understanding and generation pipeline.
 
-The system converts one user input into a frozen `ProductBlueprintV1`, then uses that frozen blueprint as the only source of truth for downstream Stitch HTML, screenshots, and validation work. React, mock data, API, and state-generation are future directions, not the current implementation priority.
+The system converts one user input into a frozen `ProductBlueprintV1`, then uses that frozen blueprint as the only source of truth for downstream Stitch HTML and validation work. React, mock data, API, and state-generation are future directions, not the current implementation priority.
 
 ## Required Reading Order
 
@@ -30,16 +30,15 @@ frozen ProductBlueprintV1
   -> Stitch prompt
   -> Stitch HTML
   -> static validation
-  -> Chrome DevTools MCP runtime validation
+  -> Chrome headless runtime validation via direct CDP client
   -> Codex SDK postprocess when code-fixable
   -> re-validation
-  -> screenshot
   -> persist validated Stitch artifacts
 ```
 
-## Chrome DevTools MCP Runtime Validation
+## Chrome Headless Runtime Validation
 
-Codex must use Chrome DevTools MCP, or a compatible runtime validation backend, for checks that static HTML parsing cannot prove.
+Codex must use the project runtime validation backend: Node temporary local server + Chrome headless remote debugging + direct CDP client, for checks that static HTML parsing cannot prove.
 
 Required runtime checks:
 

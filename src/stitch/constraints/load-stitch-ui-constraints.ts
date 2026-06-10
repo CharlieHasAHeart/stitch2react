@@ -11,8 +11,11 @@ const stitchUiConstraintsSchema = z.object({
   }),
   html: z.object({
     requireVisibleRoot: z.boolean(),
+    requirePageIdAttribute: z.boolean(),
     requireHeading: z.boolean(),
-    forbidPrimaryUiAsImage: z.boolean()
+    requireSemanticActionMarkers: z.boolean(),
+    requireFeedbackSurfaceMarkers: z.boolean(),
+    requireRecoverySurfaceMarkers: z.boolean()
   }),
   interaction: z.object({
     requireVisibleBehaviorForClickableElements: z.boolean(),
@@ -32,9 +35,6 @@ const stitchUiConstraintsSchema = z.object({
   }),
   postprocess: z.object({
     codexAllowedFixes: z.array(z.string())
-  }),
-  regeneration: z.object({
-    stricterPromptRulesByIssueCode: z.record(z.array(z.string()))
   })
 });
 

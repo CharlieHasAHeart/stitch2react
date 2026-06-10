@@ -1,0 +1,104 @@
+version: 1
+
+targets:
+  clickableSelectors:
+    - "button"
+    - "a[href]"
+    - "[role='button']"
+    - "input[type='button']"
+    - "input[type='submit']"
+    - "input[type='reset']"
+    - "[data-action]"
+
+effects:
+  meaningful:
+    - "open_modal"
+    - "open_drawer"
+    - "toggle_panel"
+    - "show_toast"
+    - "show_inline_feedback"
+    - "submit_form"
+    - "reset_form"
+    - "navigate_to_declared_page"
+    - "switch_declared_tab"
+  weakOnly:
+    - "dom_changed"
+    - "form_state_changed"
+  detectors:
+    modalSelectors:
+      - "[role='dialog']"
+      - "dialog"
+      - ".modal"
+      - "[data-modal]"
+      - "[aria-modal='true']"
+    drawerSelectors:
+      - ".drawer"
+      - "[data-drawer]"
+      - "[aria-expanded='true']"
+    toastSelectors:
+      - ".toast"
+      - "[data-toast]"
+      - "[role='status']"
+      - "[aria-live]"
+    inlineFeedbackSelectors:
+      - ".feedback"
+      - "[data-feedback-surface]"
+      - ".error"
+      - ".success"
+      - ".alert"
+      - "[role='alert']"
+    activeTabSelectors:
+      - "[role='tab'][aria-selected='true']"
+      - "[data-tab].active"
+      - "[data-tab][aria-current='true']"
+    blockingOverlaySelectors:
+      - ".overlay"
+      - ".backdrop"
+      - ".loading-overlay"
+      - "[data-overlay]"
+      - "[aria-busy='true']"
+
+console:
+  blockingTypes:
+    - "error"
+    - "assert"
+
+resources:
+  ignoreUrlSuffixes:
+    - "/favicon.ico"
+  blockingStatusCodes:
+    - 400
+    - 401
+    - 403
+    - 404
+    - 408
+    - 429
+    - 500
+    - 502
+    - 503
+    - 504
+
+navigation:
+  requireDeclaredPageNavigation: true
+  issueCodeForUndeclaredDestination: "undeclared_navigation_destination"
+  sidebar:
+    requireConsistencyAcrossPages: true
+    compare:
+      - "labels"
+      - "order"
+      - "destinations"
+    canonicalSource: "blueprint.ui.navigation.globalNavItems"
+
+issues:
+  blank_rendered_page:
+    suggestedFix: "Render visible main content with a heading and non-empty body text."
+  blocking_overlay:
+    suggestedFix: "Remove or dismiss blocking overlays so the main content and click targets remain usable."
+  missing_runtime_click_behavior:
+    suggestedFix: "Attach modal/drawer/toggle/toast/inline feedback/submit/reset/declared navigation behavior."
+  click_only_changes_focus_or_hover:
+    suggestedFix: "Make the click produce a clearer visible effect such as modal, drawer, toast, inline feedback, submit/reset, or declared navigation."
+  console_runtime_error:
+    suggestedFix: "Patch local runtime errors so the page can render and interact without blocking exceptions."
+  broken_resource:
+    suggestedFix: "Fix or remove broken blocking resources required for the UI to render or interact correctly."

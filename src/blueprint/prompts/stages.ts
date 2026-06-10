@@ -165,7 +165,6 @@ const stageGenerationContracts: Partial<Record<BlueprintStage, StageContract>> =
     mustNotInclude: [
       "Pages with no supporting flow.",
       "Image-only UI representations.",
-      "Wizard shells without genuine wizard structure.",
       "Page role inferred only from business nouns such as quote, request, order, or report."
     ],
     requiredInvariants: [
@@ -173,29 +172,24 @@ const stageGenerationContracts: Partial<Record<BlueprintStage, StageContract>> =
       "Primary actions are explicit and consistent with flow semantics.",
       "UI contract remains conservative and implementation-ready.",
       "Primary actions must have clear success feedback or clear target behavior.",
-      "AppStructure must match the actual page/navigation structure."
     ],
     allowedDefaults: [
-      "A minimal single-page or form-to-result structure when suitable.",
+      "A minimal page set derived directly from the supported flows when suitable.",
       "Result/readonly pages may prefer secondary actions over primary submit actions.",
-      "Use form_to_result rather than multi_step_wizard when the UI is a form page plus a result page."
     ],
     forbiddenExpansions: [
-      "Do not add navigation systems, dashboards, or extra pages without flow support.",
-      "Do not invent wizard steps, dashboard shells, or extra result-management surfaces just to justify an app structure label."
+      "Do not add navigation systems or extra pages without flow support.",
     ],
     outputCompletenessChecklist: [
       "All pages are flow-backed.",
       "Feedback and recovery surfaces are present where needed.",
       "Primary and secondary actions are structurally usable.",
       "page roles are explicit through page fields, states, routes, and actions rather than vague wording.",
-      "appStructure and navigation are consistent with the actual page set."
     ]
   },
   policy_uncertainty: {
     mustInclude: [
       "visualPolicy, generationPolicy, and uncertainty only.",
-      "noFollowUpQuestions=true and forbidUiAsImage=true.",
       "Default decisions for every unresolved question."
     ],
     mustNotInclude: [
@@ -353,7 +347,6 @@ Do not rewrite the blueprint.`,
       `Use only the provided upstream JSON artifacts.`,
       `Return JSON containing exactly: visualPolicy, generationPolicy, uncertainty.`,
       `Set generationPolicy.noFollowUpQuestions to true.`,
-      `Set visualPolicy.imageUsage.forbidUiAsImage to true.`,
       `Every unresolved question must have a default decision.`,
       `Do not use this stage to add scope, entities, flows, or pages.`
     ],

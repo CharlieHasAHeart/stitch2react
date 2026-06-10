@@ -7,7 +7,6 @@ import type {
 export const defaultGlobalGenerationPolicySeed: GlobalGenerationPolicySeed = {
   noFollowUpQuestions: true,
   assumptionStrategy: "conservative_mvp",
-  forbidUiAsImage: true,
   explicitBeatsInferred: true,
   doNotExpandScope: true
 };
@@ -46,7 +45,6 @@ export const defaultVisualPolicy: VisualPolicy = {
   imageUsage: {
     allowDecorativeBackgrounds: true,
     allowContentImages: true,
-    forbidUiAsImage: true,
     maxSingleImageDominanceRatio: 0.35,
     decorativeImageGuidance:
       "Images may be used as subtle, low-opacity background accents or content thumbnails, but never as the main interface.",

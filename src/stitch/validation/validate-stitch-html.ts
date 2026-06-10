@@ -6,6 +6,9 @@ import type {
   StitchHtmlValidationReport
 } from "../../blueprint/types/blueprint.js";
 import { loadStitchUiConstraints } from "../constraints/load-stitch-ui-constraints.js";
+import { findActionElements, findFeedbackSurfaces, findHeadings, findMainRoot, findNavigationLinks, findRecoverySurfaces, actionMatchesPageAction } from "../html/html-contract.js";
+import { getStringProp } from "../html/html-ast-query.js";
+import { parseStitchHtml } from "../html/parse-stitch-html.js";
 
 function issue(
   code: string,
@@ -22,18 +25,16 @@ function issue(
   };
 }
 
-function containsAny(html: string, patterns: RegExp[]): boolean {
-  return patterns.some((pattern) => pattern.test(html));
-}
-
-function collectDeclaredNavigationLabels(page: PageContract, blueprint: ProductBlueprintV1): string[] {
-  const pageNames = blueprint.ui.pages.map((item) => item.name.toLowerCase());
-  const pageRoutes = blueprint.ui.pages.map((item) => item.route.toLowerCase());
-  const actionLabels = [
+function hasDeclaredNavLabel(text: string, page: PageContract, blueprint: ProductBlueprintV1): boolean {
+  const normalized = text.toLowerCase();
+  const declared = new Set([
+    ...blueprint.ui.pages.map((item) => item.name.toLowerCase()),
+    ...blueprint.ui.pages.map((item) => item.route.toLowerCase()),
+    ...blueprint.ui.navigation.globalNavItems.map((item) => item.toLowerCase()),
     ...(page.primaryAction ? [page.primaryAction.label.toLowerCase()] : []),
     ...page.secondaryActions.map((action) => action.label.toLowerCase())
-  ];
-  return [...new Set([...pageNames, ...pageRoutes, ...actionLabels, ...blueprint.ui.navigation.globalNavItems.map((i) => i.toLowerCase())])];
+  ]);
+  return declared.has(normalized);
 }
 
 export function validateStitchHtml(input: {
@@ -46,80 +47,77 @@ export function validateStitchHtml(input: {
 }): StitchHtmlValidationReport {
   const { sessionId, blueprintId, page, blueprint, htmlArtifactId, html } = input;
   const issues: StitchHtmlValidationIssue[] = [];
-  const lowered = html.toLowerCase();
   const constraints = loadStitchUiConstraints();
 
   if (!html.trim()) {
     issues.push(issue("html_empty", "Generated HTML is empty."));
   }
 
-  if (constraints.html.requireVisibleRoot && !/<body[\s>]/i.test(html) && !/<main[\s>]/i.test(html) && !/<div/i.test(html)) {
-    issues.push(issue("html_missing_visible_root", "HTML must contain a visible root container such as body, main, or div."));
+  const tree = parseStitchHtml(html);
+  const mainRoot = findMainRoot(tree);
+  const headings = findHeadings(tree);
+  const actionElements = findActionElements(tree);
+  const feedbackSurfaces = findFeedbackSurfaces(tree);
+  const recoverySurfaces = findRecoverySurfaces(tree);
+  const navLinks = findNavigationLinks(tree);
+
+  if (constraints.html.requireVisibleRoot && !mainRoot) {
+    issues.push(issue("html_missing_visible_root", "HTML must contain a main page root element."));
   }
 
-  if (constraints.html.requireHeading && !containsAny(lowered, [/<h1/i, /<h2/i, /<title/i])) {
+  if (constraints.html.requirePageIdAttribute && (!mainRoot || getStringProp(mainRoot.node, "data-page-id") !== page.id)) {
+    issues.push(issue("html_missing_page_root_marker", `Main page root must declare data-page-id="${page.id}".`));
+  }
+
+  if (constraints.html.requireHeading && headings.length === 0) {
     issues.push(issue("html_missing_heading", "Generated HTML should include a heading or title for the page."));
   }
 
   if (!page.readonly && !page.confirmationOnly && page.primaryAction) {
-    const label = page.primaryAction.label.toLowerCase();
-    if (!lowered.includes(label) && !/<button/i.test(html)) {
+    const foundPrimary = actionElements.some((action) => actionMatchesPageAction(action, page.primaryAction));
+    if (!foundPrimary) {
       issues.push(
         issue(
           "missing_primary_action",
-          `Input page is missing the primary action "${page.primaryAction.label}".`,
+          `Missing declared primary action "${page.primaryAction.label}".`,
           "primaryAction",
-          "Render a visible button or equivalent control for the primary action."
+          "Render the declared primary action with data-action-id and data-action-kind markers."
         )
       );
     }
   }
 
   if (page.secondaryActions.length > 0) {
-    const hasAnySecondary = page.secondaryActions.some((action) => lowered.includes(action.label.toLowerCase()));
-    if (!hasAnySecondary) {
-      issues.push(issue("missing_secondary_action", "Page is missing its required secondary action(s).", "secondaryActions"));
+    const missingSecondary = page.secondaryActions.filter((declared) => !actionElements.some((action) => actionMatchesPageAction(action, declared)));
+    if (missingSecondary.length > 0) {
+      issues.push(issue("missing_secondary_action", `Missing declared secondary action(s): ${missingSecondary.map((item) => item.label).join(", ")}.`, "secondaryActions"));
     }
   }
 
-  if (page.feedbackSurfaces.length > 0 && !containsAny(lowered, [/success/i, /error/i, /toast/i, /banner/i, /message/i])) {
-    issues.push(issue("missing_feedback_surface", "Page contract requires feedback surfaces but none are evident in the HTML.", "feedbackSurfaces"));
+  if (page.feedbackSurfaces.length > 0) {
+    const validFeedback = feedbackSurfaces.filter((surface) => surface.surfaceKind && surface.role === "status" && !!surface.ariaLive);
+    if (validFeedback.length === 0) {
+      issues.push(issue("missing_feedback_surface", "Missing declared feedback surface marker or semantic status surface.", "feedbackSurfaces"));
+    }
   }
 
-  if (page.recoverySurfaces.length > 0 && !containsAny(lowered, [/retry/i, /error/i, /back/i, /edit/i])) {
-    issues.push(issue("missing_recovery_surface", "Page contract requires recovery surfaces but none are evident in the HTML.", "recoverySurfaces"));
+  if (page.recoverySurfaces.length > 0 && recoverySurfaces.length === 0) {
+    issues.push(issue("missing_recovery_surface", "Missing declared recovery surface marker.", "recoverySurfaces"));
+  }
+
+  const declaredRoutes = new Set(blueprint.ui.pages.map((item) => item.route));
+  for (const link of navLinks) {
+    if (link.href?.startsWith("/") && !declaredRoutes.has(link.href)) {
+      issues.push(issue("undeclared_navigation_destination", `Navigation href ${link.href} is not declared by the frozen blueprint.`, "ui.navigation", "Use only declared PageContract routes in navigation links."));
+    }
   }
 
   if (!constraints.navigation.allowInventedGlobalNavigation) {
-    const declaredLabels = collectDeclaredNavigationLabels(page, blueprint);
-    const forbiddenLabels = constraints.navigation.forbiddenInventedLabels.filter((label) => !declaredLabels.includes(label.toLowerCase()));
-    const hasInventedLabel = forbiddenLabels.some((label) => lowered.includes(label.toLowerCase()));
-    const hasUnexpectedNav = /<nav[\s>]/i.test(html) && blueprint.ui.navigation.globalNavItems.length === 0;
+    const hasInventedLabel = navLinks.some((link) => link.text && !hasDeclaredNavLabel(link.text, page, blueprint));
+    const hasUnexpectedNav = navLinks.length > 0 && blueprint.ui.navigation.globalNavItems.length === 0;
     if (hasInventedLabel || hasUnexpectedNav) {
-      issues.push(
-        issue(
-          "invented_navigation",
-          "Generated HTML adds navigation that is not declared in the frozen blueprint.",
-          "ui.navigation",
-          "Remove invented navigation and keep only blueprint-declared destinations."
-        )
-      );
+      issues.push(issue("invented_navigation", "Generated HTML adds navigation that is not declared in the frozen blueprint.", "ui.navigation", "Remove invented navigation and keep only blueprint-declared destinations."));
     }
-  }
-
-  const oversizedImageOnly =
-    constraints.html.forbidPrimaryUiAsImage &&
-    /<img/i.test(html) &&
-    !containsAny(lowered, [/<button/i, /<input/i, /<form/i, /<label/i, /<textarea/i, /<select/i, /<main/i]);
-  if (oversizedImageOnly) {
-    issues.push(
-      issue(
-        "ui_as_image_violation",
-        "Generated HTML appears to rely on images without sufficient real UI elements.",
-        undefined,
-        "Render forms, buttons, navigation, and key text as real HTML."
-      )
-    );
   }
 
   return {

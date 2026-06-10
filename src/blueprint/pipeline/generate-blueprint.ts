@@ -31,7 +31,9 @@ import type {
   ProductBlueprintV1,
   QualityRepairCandidate,
   RepairGuardReport,
+  RepairPathMode,
   RepairPlan,
+  RepairProvenance,
   RepairRoute,
   ValidationIssue,
   ValidationReport
@@ -46,8 +48,8 @@ export type GenerateBlueprintOptions = {
   model?: string;
   maxRepairAttempts?: number;
   maxQualityRepairAttempts?: number;
-  enableExperimentalLlmReview?: boolean;
-  enableExperimentalLlmRepair?: boolean;
+  enableExperimentalReview?: boolean;
+  enableExperimentalRepair?: boolean;
   repository?: BlueprintRepository;
   stageClient?: BlueprintStageClient;
   onStageEvent?: (event: StageEvent) => void;
@@ -62,12 +64,12 @@ export type GenerateBlueprintResult = {
   repository: BlueprintRepository;
 };
 
-function useExperimentalLlmReview(options: GenerateBlueprintOptions): boolean {
-  return options.enableExperimentalLlmReview === true;
+function useExperimentalReview(options: GenerateBlueprintOptions): boolean {
+  return options.enableExperimentalReview === true;
 }
 
-function useExperimentalLlmRepair(options: GenerateBlueprintOptions): boolean {
-  return options.enableExperimentalLlmRepair === true;
+function useExperimentalRepair(options: GenerateBlueprintOptions): boolean {
+  return options.enableExperimentalRepair === true;
 }
 
 function nowIso(): string {
@@ -186,6 +188,42 @@ function persistQualityRepairCandidate(
   return repository.saveArtifact(sessionId, "quality_repair_candidate", candidate).id;
 }
 
+function persistRepairProvenance(
+  repository: BlueprintRepository,
+  report: RepairProvenance
+): string {
+  repository.saveRepairProvenance(report);
+  return report.id;
+}
+
+function createRepairProvenance(input: {
+  sessionId: string;
+  blueprintId: string;
+  repairPlanId: string;
+  route: RepairRoute;
+  pathMode: RepairPathMode;
+  source: RepairProvenance["source"];
+  inputArtifactId: string;
+  outputArtifactId: string;
+  guardReportId?: string;
+  notes: string[];
+}): RepairProvenance {
+  return {
+    id: createId("repairprov"),
+    sessionId: input.sessionId,
+    blueprintId: input.blueprintId,
+    repairPlanId: input.repairPlanId,
+    route: input.route,
+    pathMode: input.pathMode,
+    source: input.source,
+    inputArtifactId: input.inputArtifactId,
+    outputArtifactId: input.outputArtifactId,
+    guardReportId: input.guardReportId,
+    notes: input.notes,
+    createdAt: nowIso()
+  };
+}
+
 function failSession(repository: BlueprintRepository, sessionId: string, message: string): never {
   const fullMessage = `[${sessionId}] ${message}`;
   repository.updateSession(sessionId, {
@@ -239,7 +277,6 @@ function describeQualityFailure(report: BlueprintQualityReport): string {
 }
 
 const protectedQualityRepairPaths = [
-  "ui.appStructure.shell",
   "ui.responsivePolicy.mobileFirst",
   "ui.responsivePolicy.breakpoints",
   "generationPolicy.stitchGenerationRules.requirePrimaryActionInEveryPage",
@@ -528,9 +565,6 @@ function checkFlowUiCoverage(
 ): GateReport {
   const issues: GateIssue[] = [];
   const pageFlowIds = new Set(blueprint.ui.pages.flatMap((page) => page.supportsFlowIds));
-  const pageCount = blueprint.ui.pages.length;
-  const shell = blueprint.ui.appStructure.shell;
-  const navigationType = blueprint.ui.navigation.type;
   for (const flow of blueprint.flows.coreUserFlows) {
     if (flow.uiSurfaceIds.length === 0) {
       issues.push(makeIssue("core_flow_missing_ui_surface", `flows.coreUserFlows.${flow.id}.uiSurfaceIds`, "Core flow must expose at least one UI surface before assembly."));
@@ -543,26 +577,6 @@ function checkFlowUiCoverage(
     if (page.supportsFlowIds.length === 0) {
       issues.push(makeIssue("page_missing_supported_flow", `ui.pages.${page.id}.supportsFlowIds`, "Every page must support at least one flow before assembly."));
     }
-  }
-
-  if (shell === "wizard" && (navigationType === "minimal" || pageCount <= 2)) {
-    issues.push(
-      makeIssue(
-        "app_structure_mismatch",
-        "ui.appStructure.shell",
-        "Wizard appStructure requires real wizard evidence. Use a non-wizard shell such as form_to_result when the UI is only a linear form/result structure."
-      )
-    );
-  }
-
-  if (pageCount === 2 && shell === "single_page") {
-    issues.push(
-      makeIssue(
-        "app_structure_too_generic",
-        "ui.appStructure.shell",
-        "A two-page form/result structure should use an explicit non-wizard shell such as form_to_result instead of a generic single_page shell."
-      )
-    );
   }
 
   return createGateReport(
@@ -668,7 +682,7 @@ function mergeQualityReports(
   };
 }
 
-function routeValidationIssues(issues: ValidationIssue[]): RepairRoute {
+function routeValidationIssues(issues: ValidationIssue[], pathMode: RepairPathMode): RepairRoute {
   if (issues.some((issue) => issue.code.includes("schema"))) {
     return "code_schema_repair";
   }
@@ -678,10 +692,10 @@ function routeValidationIssues(issues: ValidationIssue[]): RepairRoute {
   if (issues.some((issue) => issue.code.includes("flow") || issue.code.includes("page") || issue.path.includes("supportsFlowIds") || issue.path.includes("triggersFlowId"))) {
     return "code_reference_repair";
   }
-  return "llm_semantic_local_repair";
+  return pathMode === "experimental_llm" ? "llm_blueprint_repair" : "manual_blocking_issue";
 }
 
-function routeQualityIssues(issues: BlueprintQualityIssue[]): RepairRoute {
+function routeQualityIssues(issues: BlueprintQualityIssue[], pathMode: RepairPathMode): RepairRoute {
   const blockers = issues.filter((issue) => issue.severity === "blocker" || issue.severity === "high");
   if (blockers.length === 0) {
     return "no_repair_needed";
@@ -689,7 +703,7 @@ function routeQualityIssues(issues: BlueprintQualityIssue[]): RepairRoute {
   if (blockers.some((issue) => issue.repairability === "non_repairable")) {
     return "manual_blocking_issue";
   }
-  return "quality_repair";
+  return pathMode === "experimental_llm" ? "llm_quality_repair" : "deterministic_local_quality_repair";
 }
 
 type LayerReviewStage = "flow_quality_review" | "ui_contract_review";
@@ -734,7 +748,8 @@ async function resolveLayerQualityBlockers<TLayerOutput, TSchema extends z.ZodTy
   let attempts = 0;
 
   while (true) {
-    const route = routeQualityIssues(activeReport.issues);
+    const pathMode: RepairPathMode = "experimental_llm";
+    const route = routeQualityIssues(activeReport.issues, pathMode);
     if (route === "no_repair_needed") {
       return {
         blueprint: activeBlueprint,
@@ -768,6 +783,7 @@ async function resolveLayerQualityBlockers<TLayerOutput, TSchema extends z.ZodTy
       sessionId,
       blueprintVersionId,
       route,
+      pathMode,
       "gate_report",
       activeReport.issues.map((item) => item.code),
       activeReport.issues.flatMap((item) => item.affectedPaths ?? [item.path]),
@@ -892,6 +908,7 @@ function makeRepairPlan(
   sessionId: string,
   blueprintId: string,
   route: RepairRoute,
+  pathMode: RepairPathMode,
   source: RepairPlan["source"],
   sourceIssueCodes: string[],
   affectedPaths: string[],
@@ -905,6 +922,7 @@ function makeRepairPlan(
     sessionId,
     blueprintId,
     route,
+    pathMode,
     source,
     sourceReportId: metadata.sourceReportId,
     sourceGate: metadata.sourceGate,
@@ -913,8 +931,8 @@ function makeRepairPlan(
     affectedPaths,
     allowedMutationPaths: issueMetadata?.allowedMutationPaths ?? affectedPaths,
     protectedPaths: issueMetadata?.protectedPaths ?? protectedQualityRepairPaths,
-    requiresPostRepairGuard: route === "quality_repair",
-    requiresReviewAfterRepair: route === "quality_repair",
+    requiresPostRepairGuard: route === "llm_quality_repair",
+    requiresReviewAfterRepair: route === "llm_quality_repair",
     rationale,
     maxAttempts,
     createdAt: nowIso()
@@ -1057,8 +1075,8 @@ export async function generateBlueprintFromInput(
   const model = options.model ?? readOpenAIEnv().OPENAI_MODEL;
   const maxRepairAttempts = options.maxRepairAttempts ?? 2;
   const maxQualityRepairAttempts = options.maxQualityRepairAttempts ?? 2;
-  const experimentalLlmReview = useExperimentalLlmReview(options);
-  const experimentalLlmRepair = useExperimentalLlmRepair(options);
+  const experimentalReview = useExperimentalReview(options);
+  const experimentalRepair = useExperimentalRepair(options);
   const session = repository.createSession();
   const sessionId = session.id;
   const onStageEvent = options.onStageEvent;
@@ -1221,7 +1239,7 @@ export async function generateBlueprintFromInput(
   let flowArtifactId = initialFlowStage.artifactId;
   let flowOutput = initialFlowStage.output;
 
-  if (experimentalLlmReview) {
+  if (experimentalReview) {
     const flowBlueprintSnapshot = assembleBlueprint({
       meta: metaForInput(rawInput),
       understanding: productFrameStage.output.input,
@@ -1230,7 +1248,6 @@ export async function generateBlueprintFromInput(
       domain: domainStage.output,
       flows: flowOutput,
       ui: {
-        appStructure: { shell: "single_page", pageOrder: [] },
         navigation: { type: "minimal", globalNavItems: [] },
         pages: [],
         globalComponents: [],
@@ -1267,7 +1284,7 @@ export async function generateBlueprintFromInput(
     );
     persistGateReport(repository, flowLayerInitialGate, sessionId);
 
-    if (experimentalLlmRepair) {
+    if (experimentalRepair) {
       const resolvedFlowReview = await resolveLayerQualityBlockers(
         repository,
         stageClient,
@@ -1361,7 +1378,7 @@ export async function generateBlueprintFromInput(
   let uiArtifactId = uiStage.artifactId;
   let uiOutput = uiStage.output;
 
-  if (experimentalLlmReview) {
+  if (experimentalReview) {
     let uiContractReviewReport = await runLayerQualityReview(
       repository,
       stageClient,
@@ -1389,7 +1406,7 @@ export async function generateBlueprintFromInput(
     );
     persistGateReport(repository, uiLayerInitialGate, sessionId);
 
-    if (experimentalLlmRepair) {
+    if (experimentalRepair) {
       const uiBlueprintSnapshot = assembleBlueprint({
         meta: metaForInput(rawInput),
         understanding: productFrameStage.output.input,
@@ -1557,11 +1574,19 @@ export async function generateBlueprintFromInput(
   while (hasValidationFailure(validationReport) && repairAttempts < maxRepairAttempts) {
     repairAttempts += 1;
     repository.setSessionStatus(sessionId, "repair_routing");
-    const route = routeValidationIssues(validationReport.issues);
+    const pathMode: RepairPathMode = experimentalRepair ? "experimental_llm" : "default_deterministic";
+    const route = routeValidationIssues(validationReport.issues, pathMode);
+    if (!experimentalRepair && route === "llm_blueprint_repair") {
+      failSession(repository, sessionId, `${describeValidationFailure(validationReport)}; default deterministic repair path cannot enter LLM blueprint repair.`);
+    }
+    if (route === "manual_blocking_issue") {
+      failSession(repository, sessionId, `${describeValidationFailure(validationReport)}; deterministic local repair could not resolve the remaining validation issues.`);
+    }
     const repairPlan = makeRepairPlan(
       sessionId,
       blueprintVersion.id,
       route,
+      pathMode,
       "validation_report",
       validationReport.issues.map((item) => item.code),
       validationReport.issues.map((item) => item.path),
@@ -1574,12 +1599,27 @@ export async function generateBlueprintFromInput(
     persistRepairPlan(repository, repairPlan, sessionId);
 
     repository.setSessionStatus(sessionId, "repairing");
+    const inputBlueprintArtifactId = blueprintArtifactId;
     const locallyRepaired = repairBlueprint(activeBlueprint, validationReport);
 
-    if (!experimentalLlmRepair) {
+    if (!experimentalRepair) {
       activeBlueprint = locallyRepaired;
       const repairedArtifact = repository.saveArtifact(sessionId, "blueprint", activeBlueprint);
       blueprintArtifactId = repairedArtifact.id;
+      persistRepairProvenance(
+        repository,
+        createRepairProvenance({
+          sessionId,
+          blueprintId: blueprintVersion.id,
+          repairPlanId: repairPlan.id,
+          route,
+          pathMode,
+          source: "deterministic_local_repair",
+          inputArtifactId: inputBlueprintArtifactId,
+          outputArtifactId: blueprintArtifactId,
+          notes: ["Default deterministic repair path applied local blueprint repair."]
+        })
+      );
     } else {
       const repairStage = await runBlueprintStage(repository, {
         model,
@@ -1613,6 +1653,20 @@ export async function generateBlueprintFromInput(
 
       activeBlueprint = repairStage.output;
       blueprintArtifactId = repairStage.artifactId;
+      persistRepairProvenance(
+        repository,
+        createRepairProvenance({
+          sessionId,
+          blueprintId: blueprintVersion.id,
+          repairPlanId: repairPlan.id,
+          route,
+          pathMode,
+          source: "llm_blueprint_repair",
+          inputArtifactId: inputBlueprintArtifactId,
+          outputArtifactId: blueprintArtifactId,
+          notes: ["Experimental repair path used LLM blueprint repair after deterministic local repair candidate generation."]
+        })
+      );
     }
 
     blueprintVersion = repository.createBlueprintVersion(sessionId, blueprintArtifactId, "repaired");
@@ -1639,16 +1693,20 @@ export async function generateBlueprintFromInput(
   let qualityReviewReportId = "";
   let semanticReport: BlueprintQualityReport;
 
-  if (!experimentalLlmReview) {
+  if (!experimentalReview) {
     repository.setSessionStatus(sessionId, "quality_reviewing");
     semanticReport = reviewBlueprintQuality(sessionId, blueprintVersion.id, activeBlueprint);
     qualityReviewReportId = persistQualityReview(repository, semanticReport, sessionId);
     repository.updateBlueprintVersion(blueprintVersion.id, { qualityReviewReportId });
     let deterministicQualityAttempts = 0;
     while (semanticReport.issues.some((issue) => issue.severity === "blocker" || issue.severity === "high")) {
-      const route = routeQualityIssues(semanticReport.issues);
+      const pathMode: RepairPathMode = "default_deterministic";
+      const route = routeQualityIssues(semanticReport.issues, pathMode);
       if (route === "no_repair_needed" || route === "manual_blocking_issue") {
-        failSession(repository, sessionId, `${describeQualityFailure(semanticReport)}; deterministic default pipeline does not use LLM quality repair.`);
+        failSession(repository, sessionId, `${describeQualityFailure(semanticReport)}; deterministic default pipeline could not safely resolve the remaining quality issues.`);
+      }
+      if (route !== "deterministic_local_quality_repair") {
+        failSession(repository, sessionId, `${describeQualityFailure(semanticReport)}; default deterministic quality repair path cannot enter LLM quality repair.`);
       }
       if (deterministicQualityAttempts >= maxQualityRepairAttempts) {
         failSession(
@@ -1665,6 +1723,7 @@ export async function generateBlueprintFromInput(
         sessionId,
         blueprintVersion.id,
         route,
+        pathMode,
         "quality_review_report",
         semanticReport.issues.map((item) => item.code),
         semanticReport.issues.flatMap((item) => item.affectedPaths ?? [item.path]),
@@ -1678,9 +1737,24 @@ export async function generateBlueprintFromInput(
       persistRepairPlan(repository, repairPlan, sessionId);
 
       repository.setSessionStatus(sessionId, "quality_repairing");
+      const priorBlueprintArtifactId = blueprintArtifactId;
       activeBlueprint = repairBlueprintQuality(activeBlueprint, semanticReport);
       const repairedArtifact = repository.saveArtifact(sessionId, "blueprint", activeBlueprint);
       blueprintArtifactId = repairedArtifact.id;
+      persistRepairProvenance(
+        repository,
+        createRepairProvenance({
+          sessionId,
+          blueprintId: blueprintVersion.id,
+          repairPlanId: repairPlan.id,
+          route,
+          pathMode,
+          source: "deterministic_local_quality_repair",
+          inputArtifactId: priorBlueprintArtifactId,
+          outputArtifactId: blueprintArtifactId,
+          notes: ["Default deterministic quality repair path applied local quality repair."]
+        })
+      );
       blueprintVersion = repository.createBlueprintVersion(sessionId, blueprintArtifactId, "quality_repaired");
       repository.setSessionStatus(sessionId, "quality_repaired");
 
@@ -1721,12 +1795,13 @@ export async function generateBlueprintFromInput(
       qualityReviewReportId = persistQualityReview(repository, semanticReport, sessionId);
       repository.updateBlueprintVersion(blueprintVersion.id, { qualityReviewReportId });
 
-      const route = routeQualityIssues(semanticReport.issues);
+      const pathMode: RepairPathMode = "experimental_llm";
+      const route = routeQualityIssues(semanticReport.issues, pathMode);
       if (route === "no_repair_needed") {
         break;
       }
 
-      if (!experimentalLlmRepair) {
+      if (!experimentalRepair) {
         failSession(
           repository,
           sessionId,
@@ -1753,6 +1828,7 @@ export async function generateBlueprintFromInput(
         sessionId,
         blueprintVersion.id,
         route,
+        pathMode,
         "quality_review_report",
         semanticReport.issues.map((item) => item.code),
         semanticReport.issues.flatMap((item) => item.affectedPaths ?? [item.path]),
@@ -1766,6 +1842,7 @@ export async function generateBlueprintFromInput(
       persistRepairPlan(repository, repairPlan, sessionId);
 
       repository.setSessionStatus(sessionId, "quality_repairing");
+      const inputBlueprintArtifactId = blueprintArtifactId;
       const locallyQualityRepaired = repairBlueprintQuality(activeBlueprint, semanticReport);
       const qualityRepairStage = await runBlueprintStage(repository, {
         model,
@@ -1829,10 +1906,25 @@ export async function generateBlueprintFromInput(
         guardedArtifactId: guardedArtifact.id
       });
       repairGuardReportSchema.parse(guardReport);
-      persistRepairGuardReport(repository, guardReport, sessionId);
+      const guardReportId = persistRepairGuardReport(repository, guardReport, sessionId);
 
       activeBlueprint = guardedBlueprint;
       blueprintArtifactId = guardedArtifact.id;
+      persistRepairProvenance(
+        repository,
+        createRepairProvenance({
+          sessionId,
+          blueprintId: blueprintVersion.id,
+          repairPlanId: repairPlan.id,
+          route,
+          pathMode,
+          source: "llm_quality_repair",
+          inputArtifactId: inputBlueprintArtifactId,
+          outputArtifactId: guardedArtifact.id,
+          guardReportId,
+          notes: ["Experimental quality repair path used LLM quality repair guarded by deterministic invariants."]
+        })
+      );
       blueprintVersion = repository.createBlueprintVersion(sessionId, blueprintArtifactId, "quality_repaired");
       repository.setSessionStatus(sessionId, "quality_repaired");
 

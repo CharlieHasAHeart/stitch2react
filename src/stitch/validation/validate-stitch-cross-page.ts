@@ -4,7 +4,7 @@ import type {
   StitchCrossPageValidationReport,
   StitchHtmlValidationIssue
 } from "../../blueprint/types/blueprint.js";
-import { loadStitchUiConstraints } from "../constraints/load-stitch-ui-constraints.js";
+import { loadRuntimeValidationConstraints } from "../constraints/load-runtime-validation-constraints.js";
 
 function issue(code: string, message: string, path?: string, suggestedFix?: string): StitchHtmlValidationIssue {
   return {
@@ -42,19 +42,21 @@ export function validateStitchCrossPage(input: {
   pages: Array<{ pageId: string; htmlArtifactId: string; html: string }>;
 }): StitchCrossPageValidationReport {
   const { sessionId, blueprintId, blueprint, pages } = input;
-  const constraints = loadStitchUiConstraints();
+  const constraints = loadRuntimeValidationConstraints();
   const issues: StitchHtmlValidationIssue[] = [];
   const sidebarModels = pages.map((page) => ({ pageId: page.pageId, model: extractSidebarModel(page.html) }));
   const presentModels = sidebarModels.filter((item) => item.model);
 
-  if (constraints.navigation.sidebar.ifPresentMustBeConsistentAcrossPages && presentModels.length > 1) {
+  if (constraints.navigation.sidebar.requireConsistencyAcrossPages && presentModels.length > 1) {
     const canonicalLabels = blueprint.ui.navigation.globalNavItems;
     const baseline = presentModels[0].model!;
     for (const { pageId, model } of presentModels.slice(1)) {
-      if (JSON.stringify(model!.labels) !== JSON.stringify(baseline.labels) || JSON.stringify(model!.destinations) !== JSON.stringify(baseline.destinations)) {
+      const labelsDiffer = constraints.navigation.sidebar.compare.includes("labels") && JSON.stringify(model!.labels) !== JSON.stringify(baseline.labels);
+      const destinationsDiffer = constraints.navigation.sidebar.compare.includes("destinations") && JSON.stringify(model!.destinations) !== JSON.stringify(baseline.destinations);
+      if (labelsDiffer || destinationsDiffer) {
         issues.push(
           issue(
-            "sidebar_runtime_inconsistent",
+            "sidebar_inconsistent_across_pages",
             `Sidebar labels/order/destinations differ on page ${pageId}.`,
             `pages.${pageId}.sidebar`,
             "Normalize sidebar labels, order, and destinations from the canonical blueprint navigation source."
@@ -68,10 +70,10 @@ export function validateStitchCrossPage(input: {
         if (JSON.stringify(model!.labels) !== JSON.stringify(canonicalLabels)) {
           issues.push(
             issue(
-              "global_navigation_inconsistent_across_pages",
-              `Sidebar labels on page ${pageId} do not match blueprint.ui.navigation.globalNavItems.`,
+              "sidebar_inconsistent_across_pages",
+              `Sidebar labels on page ${pageId} do not match ${constraints.navigation.sidebar.canonicalSource}.`,
               `pages.${pageId}.sidebar`,
-              "Use blueprint.ui.navigation.globalNavItems as the canonical sidebar labels and order."
+              "Use blueprint.ui.navigation.globalNavItems as the canonical sidebar labels, order, and destinations."
             )
           );
         }
@@ -86,7 +88,7 @@ export function validateStitchCrossPage(input: {
       if (href.startsWith("/") && !declaredRoutes.has(href)) {
         issues.push(
           issue(
-            "declared_page_destination_missing",
+            constraints.navigation.issueCodeForUndeclaredDestination,
             `HTML on page ${page.pageId} links to undeclared destination ${href}.`,
             `pages.${page.pageId}.links`,
             "Only navigate to routes declared by PageContracts in the frozen blueprint."
@@ -100,6 +102,7 @@ export function validateStitchCrossPage(input: {
     id: createId("stitch_cross_val"),
     sessionId,
     blueprintId,
+    kind: "static",
     pageIds: pages.map((page) => page.pageId),
     htmlArtifactIds: pages.map((page) => page.htmlArtifactId),
     passed: issues.length === 0,

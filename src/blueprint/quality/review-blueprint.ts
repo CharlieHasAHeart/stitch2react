@@ -20,30 +20,6 @@ function issue(
   return { code, path, message, severity, repairability, suggestedFix, affectedPaths, rationale };
 }
 
-function reviewAppStructure(blueprint: ProductBlueprintV1, issues: BlueprintQualityIssue[]): void {
-  const shell = blueprint.ui.appStructure.shell;
-  const pageCount = blueprint.ui.pages.length;
-  const navigationType = blueprint.ui.navigation.type;
-
-  if (shell === "wizard") {
-    const hasWizardEvidence = navigationType !== "minimal";
-    if (!hasWizardEvidence || pageCount < 2) {
-      issues.push(
-        issue(
-          "app_structure_mismatch",
-          "ui.appStructure.shell",
-          "AppStructure shell is wizard, but the blueprint lacks strong wizard evidence such as stepper-like navigation or explicit multi-step structure.",
-          "blocker",
-          "targeted_repairable",
-          "Adjust appStructure to match the existing linear form-to-result page structure without inventing wizard pages.",
-          ["ui.appStructure.shell", "ui.navigation.type", "ui.pages"],
-          "Wizard shell without wizard structure misleads downstream implementation."
-        )
-      );
-    }
-  }
-}
-
 function reviewPrimaryActionPolicy(blueprint: ProductBlueprintV1, issues: BlueprintQualityIssue[]): void {
   if (!blueprint.generationPolicy.stitchGenerationRules.requirePrimaryActionInEveryPage) {
     issues.push(
@@ -120,7 +96,6 @@ export function reviewBlueprintQuality(
   // Default local quality review is intentionally limited to code-verifiable,
   // structurally inspectable issues. Subjective semantic quality checks stay
   // outside the default blocking path unless experimental review is enabled.
-  reviewAppStructure(blueprint, issues);
   reviewPrimaryActionPolicy(blueprint, issues);
   reviewDesktopResponsivePolicy(blueprint, issues);
 

@@ -45,6 +45,7 @@ Flows come before pages.
 Frozen ProductBlueprintV1 is the downstream source of truth.
 Default repair must be deterministic.
 Do not use LLM repair in the default path.
+LLM repair is allowed only in explicitly enabled experimental guarded mode, never in the default path.
 ```
 
 ## Default Pipeline
@@ -151,7 +152,6 @@ flows
 feedback surfaces
 recovery surfaces
 completion signals
-visualPolicy.imageUsage.forbidUiAsImage
 generationPolicy.stitchGenerationRules
 ```
 
@@ -176,11 +176,36 @@ invalid flow id
 invalid page id
 missing defaultDecision
 missing primary action on input page
-forbidUiAsImage not true
 noFollowUpQuestions not true
 ```
 
 Do not route vague semantic preferences into LLM repair.
+
+## Default vs Experimental Repair Paths
+
+The default Blueprint repair path is deterministic-only.
+
+Default path may use:
+- schema repair
+- reference repair
+- policy invariant repair
+- local static quality repair
+- freeze eligibility checks
+
+Default path must not use:
+- LLM blueprint repair
+- LLM semantic patching
+- LLM quality repair
+- vague preference repair
+
+Experimental LLM review or repair may exist only behind explicit runtime flags.
+When enabled, it must:
+- be marked as experimental
+- persist repair provenance
+- persist candidate artifacts
+- pass deterministic validation after repair
+- pass repair guard checks
+- never silently replace the deterministic default path
 
 ## Freeze Boundary
 

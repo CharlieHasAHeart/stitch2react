@@ -12,6 +12,7 @@ import type {
   GenerationStageRun,
   RepairGuardReport,
   RepairPlan,
+  RepairProvenance,
   SessionStatus,
   ValidationReport
 } from "../types/blueprint.js";
@@ -156,6 +157,11 @@ export class BlueprintRepository {
   saveRepairPlan(plan: RepairPlan): RepairPlan {
     this.store.saveRepairPlan(plan);
     return plan;
+  }
+
+  saveRepairProvenance(report: RepairProvenance): RepairProvenance {
+    this.saveArtifact(report.sessionId, "repair_provenance", report);
+    return report;
   }
 
   saveRepairGuardReport(report: RepairGuardReport): RepairGuardReport {

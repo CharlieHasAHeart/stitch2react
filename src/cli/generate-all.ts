@@ -5,7 +5,7 @@ import {
   BlueprintRepository,
   FileBlueprintStore,
   generateBlueprintFromInput,
-  generateStitchHtmlFromFrozenBlueprint,
+  generateValidatedStitchBundleFromFrozenBlueprint,
   GoogleStitchSdkStageClient
 } from "../blueprint/index.js";
 import type { StageEvent } from "../blueprint/stages/stage-runner.js";
@@ -67,7 +67,7 @@ async function main(): Promise<void> {
     onStageEvent: logStageEvent
   });
 
-  const stitchResult = await generateStitchHtmlFromFrozenBlueprint(
+  const stitchResult = await generateValidatedStitchBundleFromFrozenBlueprint(
     {
       sessionId: blueprintResult.sessionId,
       blueprintId: blueprintResult.blueprintId,
