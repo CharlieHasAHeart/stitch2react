@@ -36,27 +36,6 @@ function collectDeclaredNavigationLabels(page: PageContract, blueprint: ProductB
   return [...new Set([...pageNames, ...pageRoutes, ...actionLabels, ...blueprint.ui.navigation.globalNavItems.map((i) => i.toLowerCase())])];
 }
 
-function detectMissingClickBehavior(html: string): boolean {
-  const clickableRegexes = [
-    /<button\b[^>]*>/gi,
-    /<a\b[^>]*href\s*=\s*["'][^"']+["'][^>]*>/gi,
-    /<[^>]+role\s*=\s*["']button["'][^>]*>/gi,
-    /<[^>]+data-action\s*=\s*["'][^"']+["'][^>]*>/gi
-  ];
-  const clickables = clickableRegexes.flatMap((pattern) => html.match(pattern) ?? []);
-  if (clickables.length === 0) {
-    return false;
-  }
-
-  return clickables.some((tag) => {
-    const lowered = tag.toLowerCase();
-    const hasNoopHref = lowered.includes('href="#"') || lowered.includes("javascript:void(0)");
-    const hasButtonType = lowered.includes('type="submit"') || lowered.includes("type='submit'") || lowered.includes('type="reset"') || lowered.includes("type='reset'");
-    const hasBehaviorAttribute = /(data-action|aria-controls|aria-expanded|onclick|href\s*=\s*["']\/|href\s*=\s*["'][^.?#][^"']*["'])/i.test(tag);
-    return hasNoopHref || (!hasButtonType && !hasBehaviorAttribute);
-  });
-}
-
 export function validateStitchHtml(input: {
   sessionId: string;
   blueprintId: string;
@@ -109,17 +88,6 @@ export function validateStitchHtml(input: {
 
   if (page.recoverySurfaces.length > 0 && !containsAny(lowered, [/retry/i, /error/i, /back/i, /edit/i])) {
     issues.push(issue("missing_recovery_surface", "Page contract requires recovery surfaces but none are evident in the HTML.", "recoverySurfaces"));
-  }
-
-  if (constraints.interaction.requireVisibleBehaviorForClickableElements && detectMissingClickBehavior(html)) {
-    issues.push(
-      issue(
-        "missing_click_behavior",
-        "Every clickable element must produce visible behavior such as submit, reset, modal, drawer, toggle, toast, inline feedback, or declared navigation.",
-        "interaction",
-        "Add visible click behavior or convert decorative click targets to non-clickable elements."
-      )
-    );
   }
 
   if (!constraints.navigation.allowInventedGlobalNavigation) {

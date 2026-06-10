@@ -452,6 +452,7 @@ export type ArtifactType =
   | "stitch_html"
   | "stitch_screenshot"
   | "stitch_html_validation_report"
+  | "stitch_runtime_validation_report"
   | "stitch_cross_page_validation_report"
   | "stitch_html_postprocess_report"
   | "validated_stitch_artifact_gate_report"
@@ -683,6 +684,26 @@ export type StitchHtmlValidationIssue = {
   suggestedFix?: string;
 };
 
+export type StitchRuntimeValidationEvidence = {
+  backend: "chrome_devtools_mcp" | "stub_runtime_validator";
+  pageId: string;
+  selector?: string;
+  text?: string;
+  before?: {
+    url?: string;
+    visibleTextHash?: string;
+    domHash?: string;
+    screenshotArtifactId?: string;
+  };
+  after?: {
+    url?: string;
+    visibleTextHash?: string;
+    domHash?: string;
+    screenshotArtifactId?: string;
+  };
+  notes?: string[];
+};
+
 export type StitchHtmlValidationReport = {
   id: string;
   sessionId: string;
@@ -691,6 +712,19 @@ export type StitchHtmlValidationReport = {
   htmlArtifactId?: string;
   passed: boolean;
   issues: StitchHtmlValidationIssue[];
+  runtimeEvidence?: StitchRuntimeValidationEvidence[];
+  createdAt: string;
+};
+
+export type StitchRuntimeValidationReport = {
+  id: string;
+  sessionId: string;
+  blueprintId: string;
+  pageId: string;
+  htmlArtifactId?: string;
+  passed: boolean;
+  issues: StitchHtmlValidationIssue[];
+  runtimeEvidence: StitchRuntimeValidationEvidence[];
   createdAt: string;
 };
 

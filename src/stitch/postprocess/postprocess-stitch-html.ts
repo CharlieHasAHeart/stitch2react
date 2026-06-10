@@ -58,26 +58,26 @@ export function postprocessStitchHtml(input: {
 
   const issueCodes = new Set(issues.map((item) => item.code));
   for (const fix of constraints.postprocess.codexAllowedFixes) {
-    if (fix === "add_toast_for_feedback_action" && issueCodes.has("missing_click_behavior")) {
+    if (fix === "add_toast_for_feedback_action" && (issueCodes.has("missing_runtime_click_behavior") || issueCodes.has("click_only_changes_focus_or_hover"))) {
       updatedHtml = addToastToButtons(updatedHtml);
       appliedFixes.push(fix);
       continue;
     }
 
-    if (fix === "normalize_sidebar_across_pages" && issueCodes.has("sidebar_inconsistent_across_pages")) {
+    if (fix === "normalize_sidebar_across_pages" && issueCodes.has("sidebar_runtime_inconsistent")) {
       updatedHtml = normalizeSidebar(updatedHtml, blueprint, page);
       appliedFixes.push(fix);
       continue;
     }
 
-    if (fix === "remove_or_disable_invented_navigation" && issueCodes.has("invented_navigation")) {
+    if (fix === "remove_or_disable_invented_navigation" && (issueCodes.has("invented_navigation") || issueCodes.has("undeclared_navigation_destination"))) {
       updatedHtml = updatedHtml.replace(/<(nav|aside)\b[\s\S]*?<\/(nav|aside)>/gi, "");
       appliedFixes.push(fix);
       continue;
     }
 
-    if (fix === "convert_fake_link_to_button" && issueCodes.has("missing_click_behavior")) {
-      updatedHtml = updatedHtml.replace(/<a\b([^>]*)href\s*=\s*["']#["']([^>]*)>([\s\S]*?)<\/a>/gi, '<button type="button" data-action="show_inline_feedback"$1$2>$3</button>');
+    if (fix === "convert_fake_link_to_button" && (issueCodes.has("missing_runtime_click_behavior") || issueCodes.has("click_only_changes_focus_or_hover"))) {
+      updatedHtml = updatedHtml.replace(/<a\b([^>]*)href\s*=\s*["']#?["']([^>]*)>([\s\S]*?)<\/a>/gi, '<button type="button" data-action="show_inline_feedback"$1$2>$3</button>');
       appliedFixes.push(fix);
       continue;
     }

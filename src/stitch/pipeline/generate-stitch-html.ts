@@ -1,5 +1,6 @@
 import { StitchToolClient, Stitch } from "@google/stitch-sdk";
 import {
+  stitchRuntimeValidationReportSchema,
   validatedStitchArtifactGateReportSchema,
   stitchCrossPageValidationReportSchema,
   stitchHtmlPostprocessReportSchema,
@@ -13,15 +14,23 @@ import { readStitchEnv } from "../../blueprint/shared/env.js";
 import { createId } from "../../blueprint/shared/ids.js";
 import type {
   GenerationArtifact,
-  ValidatedStitchArtifactGateReport,
+  ProductBlueprintV1,
   StitchGenerationInput,
+  StitchHtmlValidationIssue,
   StitchPageGenerationReport,
   StitchPageGenerationResult,
-  StitchPipelineResult
+  StitchPipelineResult,
+  StitchRuntimeValidationReport,
+  ValidatedStitchArtifactGateReport
 } from "../../blueprint/types/blueprint.js";
 import { buildStitchPromptPlan } from "../plan/build-stitch-prompt-plan.js";
 import { postprocessStitchHtml } from "../postprocess/postprocess-stitch-html.js";
 import { buildStitchPagePrompt } from "../prompts/build-stitch-page-prompt.js";
+import {
+  StubStitchRuntimeValidationClient,
+  validateStitchRuntime,
+  type StitchRuntimeValidationClient
+} from "../runtime/validate-stitch-runtime.js";
 import { validateStitchCrossPage } from "../validation/validate-stitch-cross-page.js";
 import { validateStitchHtml } from "../validation/validate-stitch-html.js";
 
@@ -40,6 +49,7 @@ export type StitchHtmlStageClient = {
 export type GenerateStitchHtmlOptions = {
   repository: BlueprintRepository;
   stageClient: StitchHtmlStageClient;
+  runtimeValidationClient?: StitchRuntimeValidationClient;
 };
 
 function persistPageGenerationReport(
@@ -52,6 +62,43 @@ function persistPageGenerationReport(
 
 function projectRelativePath(...parts: string[]): string {
   return parts.join("/");
+}
+
+function mergeValidationIssues(...issueSets: StitchHtmlValidationIssue[][]): StitchHtmlValidationIssue[] {
+  const merged: StitchHtmlValidationIssue[] = [];
+  const seen = new Set<string>();
+  for (const set of issueSets) {
+    for (const item of set) {
+      const key = `${item.code}:${item.path ?? ""}:${item.message}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        merged.push(item);
+      }
+    }
+  }
+  return merged;
+}
+
+function buildMergedValidationReport(input: {
+  sessionId: string;
+  blueprintId: string;
+  pageId: string;
+  htmlArtifactId?: string;
+  staticIssues: StitchHtmlValidationIssue[];
+  runtimeReport: StitchRuntimeValidationReport;
+}) {
+  const mergedIssues = mergeValidationIssues(input.staticIssues, input.runtimeReport.issues);
+  return stitchHtmlValidationReportSchema.parse({
+    id: createId("stitch_val"),
+    sessionId: input.sessionId,
+    blueprintId: input.blueprintId,
+    pageId: input.pageId,
+    htmlArtifactId: input.htmlArtifactId,
+    passed: mergedIssues.length === 0,
+    issues: mergedIssues,
+    runtimeEvidence: input.runtimeReport.runtimeEvidence,
+    createdAt: new Date().toISOString()
+  });
 }
 
 function buildValidatedArtifactGate(input: {
@@ -74,12 +121,54 @@ function buildValidatedArtifactGate(input: {
   };
 }
 
+async function runMergedValidation(input: {
+  sessionId: string;
+  blueprintId: string;
+  blueprint: ProductBlueprintV1;
+  page: ProductBlueprintV1["ui"]["pages"][number];
+  htmlArtifactId: string;
+  html: string;
+  runtimeValidationClient: StitchRuntimeValidationClient;
+}) {
+  const staticReport = validateStitchHtml({
+    sessionId: input.sessionId,
+    blueprintId: input.blueprintId,
+    page: input.page,
+    blueprint: input.blueprint,
+    htmlArtifactId: input.htmlArtifactId,
+    html: input.html
+  });
+  const runtimeReport = stitchRuntimeValidationReportSchema.parse(
+    await validateStitchRuntime({
+      sessionId: input.sessionId,
+      blueprintId: input.blueprintId,
+      blueprint: input.blueprint,
+      page: input.page,
+      htmlArtifactId: input.htmlArtifactId,
+      html: input.html,
+      runtimeClient: input.runtimeValidationClient
+    })
+  );
+  return {
+    staticReport,
+    runtimeReport,
+    mergedReport: buildMergedValidationReport({
+      sessionId: input.sessionId,
+      blueprintId: input.blueprintId,
+      pageId: input.page.id,
+      htmlArtifactId: input.htmlArtifactId,
+      staticIssues: staticReport.issues,
+      runtimeReport
+    })
+  };
+}
+
 export async function generateStitchHtmlFromFrozenBlueprint(
   input: StitchGenerationInput,
   options: GenerateStitchHtmlOptions
 ): Promise<StitchPipelineResult> {
   const { sessionId, blueprintId, frozenBlueprint, targetPages } = input;
-  const { repository, stageClient } = options;
+  const { repository, stageClient, runtimeValidationClient = new StubStitchRuntimeValidationClient() } = options;
 
   const blueprintVersion = repository.requireBlueprintVersion(blueprintId);
   if (blueprintVersion.status !== "frozen") {
@@ -92,16 +181,8 @@ export async function generateStitchHtmlFromFrozenBlueprint(
   );
   const promptPlanArtifact = repository.saveArtifact(sessionId, "stitch_prompt_plan", promptPlan);
   const projectId = blueprintId;
-  const blueprintJsonPath = repository.saveProjectBundleFile(
-    projectId,
-    projectRelativePath("blueprint", "frozen-blueprint.json"),
-    frozenBlueprint
-  );
-  const stitchPromptPlanPath = repository.saveProjectBundleFile(
-    projectId,
-    projectRelativePath("stitch", "prompt-plan.json"),
-    promptPlan
-  );
+  const blueprintJsonPath = repository.saveProjectBundleFile(projectId, projectRelativePath("blueprint", "frozen-blueprint.json"), frozenBlueprint);
+  const stitchPromptPlanPath = repository.saveProjectBundleFile(projectId, projectRelativePath("stitch", "prompt-plan.json"), promptPlan);
 
   const pageResults: StitchPageGenerationResult[] = [];
   const manifestPages: ProjectBundleManifest["pages"] = [];
@@ -118,11 +199,7 @@ export async function generateStitchHtmlFromFrozenBlueprint(
       buildStitchPagePrompt(sessionId, blueprintId, frozenBlueprint, planPage, page)
     );
     const persistedPrompt = repository.saveArtifact(sessionId, "stitch_page_prompt", promptArtifact);
-    const projectPromptPath = repository.saveProjectBundleFile(
-      projectId,
-      projectRelativePath("stitch", "pages", page.id, "prompt.json"),
-      promptArtifact
-    );
+    const projectPromptPath = repository.saveProjectBundleFile(projectId, projectRelativePath("stitch", "pages", page.id, "prompt.json"), promptArtifact);
 
     const htmlResult = await stageClient.generatePageHtml({
       sessionId,
@@ -132,10 +209,7 @@ export async function generateStitchHtmlFromFrozenBlueprint(
     });
 
     let currentHtml = htmlResult.html;
-    let htmlArtifact = repository.saveArtifact(sessionId, "stitch_html", {
-      pageId: page.id,
-      html: currentHtml
-    });
+    let htmlArtifact = repository.saveArtifact(sessionId, "stitch_html", { pageId: page.id, html: currentHtml });
     repository.savePageHtmlFile(sessionId, page.id, currentHtml);
 
     let screenshotArtifactId: string | undefined;
@@ -146,29 +220,24 @@ export async function generateStitchHtmlFromFrozenBlueprint(
         screenshotBase64: htmlResult.screenshotBase64
       });
       screenshotArtifactId = screenshotArtifact.id;
-      projectScreenshotArtifactPath = repository.saveProjectBundleFile(
-        projectId,
-        projectRelativePath("stitch", "pages", page.id, "screenshot.json"),
-        {
-          pageId: page.id,
-          screenshotBase64: htmlResult.screenshotBase64
-        }
-      );
+      projectScreenshotArtifactPath = repository.saveProjectBundleFile(projectId, projectRelativePath("stitch", "pages", page.id, "screenshot.json"), {
+        pageId: page.id,
+        screenshotBase64: htmlResult.screenshotBase64
+      });
     }
 
     repository.setSessionStatus(sessionId, "stitch_validating");
-    let validationReport = stitchHtmlValidationReportSchema.parse(
-      validateStitchHtml({
-        sessionId,
-        blueprintId,
-        page,
-        blueprint: frozenBlueprint,
-        htmlArtifactId: htmlArtifact.id,
-        html: currentHtml
-      })
-    );
+    let { runtimeReport, mergedReport } = await runMergedValidation({
+      sessionId,
+      blueprintId,
+      blueprint: frozenBlueprint,
+      page,
+      htmlArtifactId: htmlArtifact.id,
+      html: currentHtml,
+      runtimeValidationClient
+    });
 
-    if (!validationReport.passed) {
+    if (!mergedReport.passed) {
       const { html: postprocessedHtml, report } = postprocessStitchHtml({
         sessionId,
         blueprintId,
@@ -176,48 +245,30 @@ export async function generateStitchHtmlFromFrozenBlueprint(
         page,
         htmlArtifactId: htmlArtifact.id,
         html: currentHtml,
-        issues: validationReport.issues
+        issues: mergedReport.issues
       });
       if (postprocessedHtml !== currentHtml) {
         currentHtml = postprocessedHtml;
-        htmlArtifact = repository.saveArtifact(sessionId, "stitch_html", {
-          pageId: page.id,
-          html: currentHtml
-        });
+        htmlArtifact = repository.saveArtifact(sessionId, "stitch_html", { pageId: page.id, html: currentHtml });
         repository.saveArtifact(sessionId, "stitch_html_postprocess_report", stitchHtmlPostprocessReportSchema.parse(report));
         repository.savePageHtmlFile(sessionId, page.id, currentHtml);
-        validationReport = stitchHtmlValidationReportSchema.parse(
-          validateStitchHtml({
-            sessionId,
-            blueprintId,
-            page,
-            blueprint: frozenBlueprint,
-            htmlArtifactId: htmlArtifact.id,
-            html: currentHtml
-          })
-        );
+        ({ runtimeReport, mergedReport } = await runMergedValidation({
+          sessionId,
+          blueprintId,
+          blueprint: frozenBlueprint,
+          page,
+          htmlArtifactId: htmlArtifact.id,
+          html: currentHtml,
+          runtimeValidationClient
+        }));
       }
     }
 
-    const persistedValidation = repository.saveArtifact(sessionId, "stitch_html_validation_report", validationReport);
-    const projectHtmlArtifactPath = repository.saveProjectBundleFile(
-      projectId,
-      projectRelativePath("stitch", "pages", page.id, "html.json"),
-      {
-        pageId: page.id,
-        html: currentHtml
-      }
-    );
-    const projectHtmlFilePath = repository.saveProjectBundleTextFile(
-      projectId,
-      projectRelativePath("stitch", "pages", page.id, "page.html"),
-      currentHtml
-    );
-    const projectValidationArtifactPath = repository.saveProjectBundleFile(
-      projectId,
-      projectRelativePath("stitch", "pages", page.id, "validation.json"),
-      validationReport
-    );
+    repository.saveArtifact(sessionId, "stitch_runtime_validation_report", runtimeReport);
+    const persistedValidation = repository.saveArtifact(sessionId, "stitch_html_validation_report", mergedReport);
+    const projectHtmlArtifactPath = repository.saveProjectBundleFile(projectId, projectRelativePath("stitch", "pages", page.id, "html.json"), { pageId: page.id, html: currentHtml });
+    const projectHtmlFilePath = repository.saveProjectBundleTextFile(projectId, projectRelativePath("stitch", "pages", page.id, "page.html"), currentHtml);
+    const projectValidationArtifactPath = repository.saveProjectBundleFile(projectId, projectRelativePath("stitch", "pages", page.id, "validation.json"), mergedReport);
 
     const pageReport: StitchPageGenerationReport = {
       id: createId("stitch_page"),
@@ -228,15 +279,11 @@ export async function generateStitchHtmlFromFrozenBlueprint(
       htmlArtifactId: htmlArtifact.id,
       screenshotArtifactId,
       validationReportId: persistedValidation.id,
-      status: validationReport.passed ? "validated" : "failed",
+      status: mergedReport.passed ? "validated" : "failed",
       createdAt: new Date().toISOString()
     };
     persistPageGenerationReport(repository, sessionId, pageReport);
-    const projectGenerationReportPath = repository.saveProjectBundleFile(
-      projectId,
-      projectRelativePath("stitch", "pages", page.id, "generation-report.json"),
-      pageReport
-    );
+    const projectGenerationReportPath = repository.saveProjectBundleFile(projectId, projectRelativePath("stitch", "pages", page.id, "generation-report.json"), pageReport);
 
     pageResults.push({
       sessionId,
@@ -272,11 +319,15 @@ export async function generateStitchHtmlFromFrozenBlueprint(
   const crossPageValidationArtifact = repository.saveArtifact(sessionId, "stitch_cross_page_validation_report", crossPageReport);
   repository.saveProjectBundleFile(projectId, projectRelativePath("stitch", "cross-page-validation.json"), crossPageReport);
 
+  const finalPageResults = crossPageReport.passed
+    ? pageResults
+    : pageResults.map((page) => ({ ...page, status: "failed" as const }));
+
   const validatedArtifactGate = validatedStitchArtifactGateReportSchema.parse(
     buildValidatedArtifactGate({
       sessionId,
       blueprintId,
-      pageResults: crossPageReport.passed ? pageResults : pageResults.map((page) => ({ ...page, status: "failed" as const }))
+      pageResults: finalPageResults
     })
   );
   const validatedArtifactGateArtifact = repository.saveArtifact(sessionId, "validated_stitch_artifact_gate_report", validatedArtifactGate);
@@ -300,7 +351,7 @@ export async function generateStitchHtmlFromFrozenBlueprint(
     sessionId,
     blueprintId,
     promptPlanArtifactId: promptPlanArtifact.id,
-    pageResults,
+    pageResults: finalPageResults,
     crossPageValidationReportId: crossPageValidationArtifact.id,
     validatedArtifactGateReportId: validatedArtifactGateArtifact.id
   };

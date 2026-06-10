@@ -21,4 +21,5 @@ export * from "../stitch/validation/validate-stitch-html.js";
 export * from "../stitch/validation/validate-stitch-cross-page.js";
 export * from "../stitch/postprocess/postprocess-stitch-html.js";
 export * from "../stitch/constraints/load-stitch-ui-constraints.js";
+export * from "../stitch/runtime/validate-stitch-runtime.js";
 export * from "../stitch/pipeline/generate-stitch-html.js";

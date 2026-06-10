@@ -54,7 +54,7 @@ export function validateStitchCrossPage(input: {
       if (JSON.stringify(model!.labels) !== JSON.stringify(baseline.labels) || JSON.stringify(model!.destinations) !== JSON.stringify(baseline.destinations)) {
         issues.push(
           issue(
-            "sidebar_inconsistent_across_pages",
+            "sidebar_runtime_inconsistent",
             `Sidebar labels/order/destinations differ on page ${pageId}.`,
             `pages.${pageId}.sidebar`,
             "Normalize sidebar labels, order, and destinations from the canonical blueprint navigation source."

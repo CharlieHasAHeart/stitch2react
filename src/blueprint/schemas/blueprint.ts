@@ -609,6 +609,26 @@ export const stitchHtmlValidationIssueSchema = z.object({
   suggestedFix: z.string().optional()
 });
 
+export const stitchRuntimeValidationEvidenceSchema = z.object({
+  backend: z.enum(["chrome_devtools_mcp", "stub_runtime_validator"]),
+  pageId: z.string(),
+  selector: z.string().optional(),
+  text: z.string().optional(),
+  before: z.object({
+    url: z.string().optional(),
+    visibleTextHash: z.string().optional(),
+    domHash: z.string().optional(),
+    screenshotArtifactId: z.string().optional()
+  }).optional(),
+  after: z.object({
+    url: z.string().optional(),
+    visibleTextHash: z.string().optional(),
+    domHash: z.string().optional(),
+    screenshotArtifactId: z.string().optional()
+  }).optional(),
+  notes: z.array(z.string()).optional()
+});
+
 export const stitchHtmlValidationReportSchema = z.object({
   id: z.string(),
   sessionId: z.string(),
@@ -617,6 +637,19 @@ export const stitchHtmlValidationReportSchema = z.object({
   htmlArtifactId: z.string().optional(),
   passed: z.boolean(),
   issues: z.array(stitchHtmlValidationIssueSchema),
+  runtimeEvidence: z.array(stitchRuntimeValidationEvidenceSchema).optional(),
+  createdAt: z.string()
+});
+
+export const stitchRuntimeValidationReportSchema = z.object({
+  id: z.string(),
+  sessionId: z.string(),
+  blueprintId: z.string(),
+  pageId: z.string(),
+  htmlArtifactId: z.string().optional(),
+  passed: z.boolean(),
+  issues: z.array(stitchHtmlValidationIssueSchema),
+  runtimeEvidence: z.array(stitchRuntimeValidationEvidenceSchema),
   createdAt: z.string()
 });
 
