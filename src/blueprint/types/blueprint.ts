@@ -692,6 +692,15 @@ export type StitchPromptPlan = {
 export type StitchCandidatePromptPlanMode = "initial" | "candidate" | "targeted-reprompt";
 export type StitchCandidateGenerationGoal = "structure" | "balanced" | "visual-polish" | "dense-dashboard";
 export type StitchCandidateLayoutIntent = "dashboard" | "form" | "detail" | "workflow" | "empty-state";
+export type SoftScoreKey =
+  | "design_consistency"
+  | "information_hierarchy"
+  | "visual_polish"
+  | "density_fit"
+  | "enterprise_saas_fit"
+  | "component_clarity"
+  | "navigation_clarity";
+export type CandidateSoftScores = Record<SoftScoreKey, number>;
 
 export type StitchCandidatePromptPlan = {
   pageId: string;
@@ -721,7 +730,7 @@ export type StitchCandidateAttempt = {
   postprocessReportId?: string;
   hardGateResult: "pass" | "fail";
   hardGateIssues: string[];
-  softScores?: Record<string, number>;
+  softScores?: CandidateSoftScores;
   rejectionReasons: string[];
 };
 

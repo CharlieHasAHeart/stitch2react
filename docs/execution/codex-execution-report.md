@@ -51,3 +51,21 @@ Validation result:
 - Passed. `npm test` completed successfully with 69/69 tests passing.
 Blockers or follow-up notes:
 - Soft-score behavior is intentionally deterministic and rule-based at this stage; no visual or screenshot scoring was introduced.
+
+Task ID: TASK-034
+Status: completed
+Summary of implementation: Tightened candidate ranking contracts by moving deterministic structural signal extraction and rule-based 0..1 scoring into `soft-scores.ts`, restricting soft score keys to the fixed seven-key contract, switching total score to an average, enforcing fail-fast ranking for ineligible attempts, and stabilizing tie-breakers by total score, candidateIndex, then attemptId. Also aligned candidate schemas/types so attempt softScores use the fixed candidate soft-score shape.
+Files changed:
+- src/stitch/candidate-search/soft-scores.ts
+- src/stitch/candidate-search/hard-gates.ts
+- src/blueprint/types/blueprint.ts
+- src/blueprint/schemas/blueprint.ts
+- tests/stitch-candidate-search.test.ts
+Validation commands run:
+- npm run build
+- npm test
+Validation result:
+- Passed. `npm run build` completed successfully.
+- Passed. `npm test` completed successfully with 71/71 tests passing.
+Blockers or follow-up notes:
+- This task was completed before TASK-004 because the updated execution spine and candidate-stage documentation expanded TASK-034 into the contract owner for deterministic HTML signal extraction and strict ranking behavior required by downstream candidate orchestration.

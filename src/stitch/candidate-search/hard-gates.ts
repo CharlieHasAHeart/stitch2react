@@ -27,6 +27,6 @@ export function toHardGateResult(issueCodes: readonly string[]): "pass" | "fail"
   return hasHardGateFailure(issueCodes) ? "fail" : "pass";
 }
 
-export function isCandidateAttemptEligible(attempt: Pick<StitchCandidateAttempt, "hardGateIssues" | "hardGateResult">): boolean {
+export function isCandidateAttemptEligible(attempt: { hardGateIssues: readonly string[]; hardGateResult: StitchCandidateAttempt["hardGateResult"] }): boolean {
   return attempt.hardGateResult === "pass" && attempt.hardGateIssues.length === 0;
 }

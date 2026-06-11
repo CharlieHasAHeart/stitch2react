@@ -615,6 +615,26 @@ export const stitchPromptPlanSchema = z.object({
   pages: z.array(stitchPromptPlanPageSchema)
 });
 
+export const softScoreKeySchema = z.enum([
+  "design_consistency",
+  "information_hierarchy",
+  "visual_polish",
+  "density_fit",
+  "enterprise_saas_fit",
+  "component_clarity",
+  "navigation_clarity"
+]);
+
+export const candidateSoftScoresSchema = z.object({
+  design_consistency: z.number(),
+  information_hierarchy: z.number(),
+  visual_polish: z.number(),
+  density_fit: z.number(),
+  enterprise_saas_fit: z.number(),
+  component_clarity: z.number(),
+  navigation_clarity: z.number()
+});
+
 export const stitchCandidatePromptPlanSchema = z.object({
   pageId: z.string(),
   pageRoute: z.string(),
@@ -643,7 +663,7 @@ export const stitchCandidateAttemptSchema = z.object({
   postprocessReportId: z.string().optional(),
   hardGateResult: z.enum(["pass", "fail"]),
   hardGateIssues: z.array(z.string()),
-  softScores: z.record(z.number()).optional(),
+  softScores: candidateSoftScoresSchema.optional(),
   rejectionReasons: z.array(z.string())
 });
 
