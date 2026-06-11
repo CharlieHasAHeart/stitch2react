@@ -68,7 +68,7 @@ navigation:
     allowOnlyActiveStateDifference: true
 
 postprocess:
-  codexAllowedFixes:
+  allowedFixes:
     - "add_modal_for_unhandled_button"
     - "add_toast_for_feedback_action"
     - "add_inline_error_or_success_state"
@@ -78,11 +78,3 @@ postprocess:
     - "normalize_sidebar_across_pages"
     - "remove_or_disable_invented_navigation"
     - "convert_fake_link_to_button"
-
-stitchGeneration:
-  mode: "single"
-  experimentalCandidateSearch:
-    enabled: false
-    candidatesPerPage: 3
-    maxRepromptAttempts: 1
-    maxCandidatesPerReprompt: 2
