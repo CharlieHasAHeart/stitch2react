@@ -1,18 +1,18 @@
-# Stitch Candidate Search Stage
+# Stitch Candidate Stage
 
 ## Purpose
 
-This document defines the experimental Stitch candidate-search mode.
+This document defines the experimental Stitch candidate mode.
 
-Candidate search treats Stitch as a stochastic candidate generator. It generates multiple bounded page-level HTML candidates, validates them, ranks eligible candidates, and persists a selected artifact with full lineage.
+Candidate mode treats Stitch as a stochastic candidate generator. It generates multiple bounded page-level HTML candidates, validates them, ranks eligible candidates, and persists a selected artifact with full lineage.
 
 The goal is to improve visual quality and first-pass success rate while preserving the frozen `ProductBlueprintV1` as the only product source of truth.
 
 ## Status
 
-Candidate search is experimental.
+Candidate mode is experimental.
 
-It must be explicitly enabled by runtime configuration and must not replace the default Stitch2HTML path without a documentation update, contract-test update, and review of artifact compatibility.
+It must be explicitly selected by runtime configuration and must not replace the default Stitch2HTML path without a documentation update, contract-test update, and review of artifact compatibility.
 
 Default path:
 
@@ -24,7 +24,7 @@ PageContract
   -> deterministic postprocess or fail
 ```
 
-Experimental candidate-search path:
+Experimental candidate path:
 
 ```text
 PageContract
@@ -37,7 +37,7 @@ PageContract
 
 ## Non-goals
 
-Candidate search must not:
+Candidate mode must not:
 
 ```text
 reinterpret raw user input
@@ -51,11 +51,11 @@ mutate the frozen blueprint
 turn soft visual preferences into product requirements
 ```
 
-Candidate search is not a replacement for blueprint generation. It is a bounded visual artifact search over a fixed `PageContract`.
+Candidate mode is not a replacement for blueprint generation. It is a bounded visual artifact search over a fixed `PageContract`.
 
 ## Source of Truth
 
-Candidate search consumes:
+Candidate mode consumes:
 
 ```text
 frozen ProductBlueprintV1
@@ -64,7 +64,7 @@ compiled Stitch prompt constraints
 validation issue codes from previous attempts, when targeted reprompt is enabled
 ```
 
-Candidate search must not consume:
+Candidate mode must not consume:
 
 ```text
 raw user input
@@ -73,9 +73,9 @@ free-form product reinterpretation
 vague semantic preferences
 ```
 
-The frozen blueprint remains immutable for the entire candidate-search run.
+The frozen blueprint remains immutable for the entire candidate run.
 
-## Candidate Search Flow
+## Candidate Flow
 
 ```text
 Frozen ProductBlueprintV1
@@ -94,32 +94,39 @@ Frozen ProductBlueprintV1
   -> persist selected candidate or fail with diagnostics
 ```
 
-Candidate search is a bounded search process, not an unbounded retry loop.
+Candidate mode is a bounded search process, not an unbounded retry loop.
 
-## Feature Flag
+## Generation Configuration
+
+Generation mode and candidate budgets are owned by:
+
+```text
+src/stitch/config/stitch-generation-config.yaml
+```
 
 Recommended configuration shape:
 
 ```yaml
-stitchGeneration:
-  mode: single
-  experimentalCandidateSearch:
-    enabled: false
-    candidatesPerPage: 3
-    maxRepromptAttempts: 1
-    maxCandidatesPerReprompt: 2
+version: 1
+mode: "single"
+candidateSearch:
+  candidatesPerPage: 3
+  maxRepromptAttempts: 1
+  maxCandidatesPerReprompt: 2
 ```
 
 Valid modes:
 
 ```text
 single
-candidate-search
+candidate
 ```
 
 `single` remains the default.
 
-`candidate-search` may run only when the experimental flag is enabled.
+`candidate` is the single opt-in switch for experimental candidate generation.
+
+Do not use a second `enabled` flag for candidate mode.
 
 ## StitchPromptPlan Contract
 
@@ -168,13 +175,13 @@ type StitchCandidateAttempt = {
 
 No candidate may be silently discarded. Every rejected candidate should persist rejection reasons.
 
-## Candidate Search Run Contract
+## Candidate Run Contract
 
 ```ts
-type StitchCandidateSearchRun = {
+type StitchCandidateRun = {
   runId: string;
   pageId: string;
-  mode: "candidate-search";
+  mode: "candidate";
   candidateCount: number;
   attempts: StitchCandidateAttempt[];
   selectedAttemptId?: string;
@@ -240,7 +247,7 @@ If a score uses a screenshot or visual analysis artifact, the screenshot remains
 
 ## Screenshot and Visual Evidence
 
-Candidate search may capture screenshots as evaluation artifacts.
+Candidate mode may capture screenshots as evaluation artifacts.
 
 Screenshots may be used for:
 
@@ -270,9 +277,9 @@ Candidate selection must follow this order:
 
 The selected candidate must have validation reports proving eligibility.
 
-## Deterministic Postprocess in Candidate Search
+## Deterministic Postprocess in Candidate Mode
 
-Candidate search may reuse the deterministic postprocess stage.
+Candidate mode may reuse the deterministic postprocess stage.
 
 Postprocess remains constrained by:
 
@@ -284,11 +291,11 @@ per-fix applicability checks
 re-validation
 ```
 
-Candidate search must not use postprocess to change product scope or rewrite an entire page for visual preference.
+Candidate mode must not use postprocess to change product scope or rewrite an entire page for visual preference.
 
 ## Targeted Reprompt Policy
 
-Targeted reprompt is allowed only in candidate-search mode and only within explicit retry budgets.
+Targeted reprompt is allowed only in candidate mode and only within explicit retry budgets.
 
 Targeted reprompt may use:
 
@@ -331,12 +338,12 @@ sidebar_inconsistent_across_pages -> style/navigation consistency prompt using c
 
 ## Artifact Lineage
 
-Candidate search must persist enough lineage to debug selection decisions.
+Candidate mode must persist enough lineage to debug selection decisions.
 
 Experimental artifacts:
 
 ```text
-stitch_candidate_search_run
+stitch_candidate_run
 stitch_candidate_attempt
 stitch_candidate_prompt_plan
 stitch_candidate_prompt
@@ -349,7 +356,7 @@ rejected_candidate_report
 selected_candidate_manifest
 ```
 
-The final selected candidate may be exposed downstream as the normal validated Stitch HTML artifact, but the candidate-search lineage should remain available for diagnostics.
+The final selected candidate may be exposed downstream as the normal validated Stitch HTML artifact, but the candidate lineage should remain available for diagnostics.
 
 ## Relationship to Default Pipeline
 
@@ -363,7 +370,7 @@ PageContract
   -> deterministic postprocess or fail
 ```
 
-Candidate search is an experimental replacement for the generation orchestration only.
+Candidate mode is an experimental replacement for the generation orchestration only.
 
 It does not replace:
 
@@ -379,16 +386,16 @@ final validation gate
 
 ## Required Contract Tests
 
-Candidate search should add contract tests for:
+Candidate mode should add contract tests for:
 
 ```text
-candidate search is disabled by default
-candidate search does not consume raw input
-candidate search preserves frozen blueprint as sole product source
-candidate search creates bounded prompt plans
+candidate mode is not selected by default
+candidate mode does not consume raw input
+candidate mode preserves frozen blueprint as sole product source
+candidate mode creates bounded prompt plans
 candidate with hard gate failure cannot be selected
 soft score cannot override hard gate failure
 rejected candidates persist rejection reasons
 targeted reprompt uses issue codes only
-candidate-search lineage is persisted
+candidate lineage is persisted
 ```
