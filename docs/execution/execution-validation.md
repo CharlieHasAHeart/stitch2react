@@ -118,7 +118,7 @@ Required validation: VAL-005, VAL-006, VAL-007, VAL-008, VAL-019.
 
 Goal: generate multiple bounded candidate attempts only when `mode: "candidate"` is selected.
 
-Required validation: VAL-009, VAL-010, VAL-011.
+Required validation: VAL-009, VAL-010, VAL-011, VAL-025.
 
 ### FLOW-004: Candidate Selection Gate
 
@@ -136,7 +136,7 @@ Required validation: VAL-015, VAL-016.
 
 Goal: persist candidate attempts, rejected reasons, selected candidate, validation reports, postprocess decisions, and compatibility with the normal validated Stitch artifact path.
 
-Required validation: VAL-017, VAL-018, VAL-019.
+Required validation: VAL-017, VAL-018, VAL-019, VAL-025.
 
 ## Foundation Tasks
 
@@ -420,6 +420,93 @@ Out of scope:
 
 Required validation: VAL-013, VAL-022, VAL-024.
 
+### TASK-037: Probe Stitch output packaging and interaction capabilities
+
+Goal: determine what Google Stitch can actually generate and export before the pipeline assumes a single-HTML artifact, an HTML-with-inline-JS artifact, a multi-file HTML/CSS/JS bundle, or a multi-page HTML bundle.
+
+Background:
+
+```text
+Public descriptions say Stitch can generate frontend code and export CSS/HTML or Figma, but that is not enough to prove whether our accessible Stitch workflow can produce:
+- one self-contained HTML file only
+- one HTML file with inline CSS and inline JS
+- one HTML file plus external CSS/JS files
+- multiple HTML files that can link to each other
+- a richer frontend project bundle
+```
+
+Capability probes:
+
+```text
+Probe A: single static HTML
+- Prompt Stitch for a simple read-only enterprise page.
+- Record whether the output is only HTML, or whether separate CSS/JS files are offered.
+
+Probe B: single HTML with inline JS interaction
+- Prompt Stitch for tabs, modal/drawer, toast, and inline validation states.
+- Record whether Stitch emits inline <script> behavior inside the HTML artifact.
+- Validate whether those interactions work in the existing runtime validator.
+
+Probe C: HTML with external CSS/JS files
+- Prompt Stitch to produce index.html, styles.css, and app.js as separate files.
+- Record whether Stitch actually emits multiple files, multiple code blocks, or collapses everything into one HTML file.
+- Validate whether external asset references can be served by the existing temporary runtime server.
+
+Probe D: multiple linked HTML pages
+- Prompt Stitch to produce at least index.html and detail.html with a declared navigation link between them.
+- Record whether Stitch emits separate HTML files and whether href navigation works under the runtime validator.
+- If Stitch emits only one HTML file that simulates multiple screens, record the simulated state-change mechanism.
+
+Probe E: export surface
+- Record what export options are available in the current Stitch UI/API workflow.
+- Distinguish copy-code, CSS/HTML export, Figma export, MCP/SDK export, and any project/bundle export.
+```
+
+Required output:
+
+```text
+Create a capability matrix in docs/execution/codex-execution-report.md or a linked probe report.
+For each probe, record:
+- prompt used
+- output shape observed
+- files or code blocks produced
+- whether JS was inline, external, absent, or inaccessible
+- whether CSS was inline, external, absent, or inaccessible
+- whether runtime validation could execute the artifact
+- whether cross-page navigation was real route/file navigation, hash/state simulation, or absent
+- blockers and manual steps
+```
+
+Decision rules:
+
+```text
+If Stitch reliably produces only single HTML artifacts:
+- keep the default artifact contract as one Stitch HTML artifact.
+- allow inline JS only if runtime validation can execute and validate it safely.
+
+If Stitch can reliably produce one HTML with inline JS:
+- add an explicit artifact capability flag for inline_interactions.
+- extend validation to inspect and execute inline interaction behavior.
+
+If Stitch can reliably produce HTML/CSS/JS bundles:
+- add a new candidate artifact shape for stitch_candidate_bundle.
+- update persistence, temporary runtime serving, validation, and selected-candidate adaptation before relying on bundles.
+
+If Stitch can reliably produce multiple linked HTML files:
+- add a multi-page bundle contract before treating href navigation as real cross-page behavior.
+- keep navigation_clarity as presentation scoring until cross-page runtime validation proves navigation behavior.
+```
+
+Out of scope:
+
+```text
+- Do not change the default pipeline artifact contract before the probe is complete.
+- Do not assume Stitch MCP/SDK capabilities without observed evidence in the current workflow.
+- Do not treat simulated screen changes inside one HTML file as equivalent to multi-file navigation.
+```
+
+Required validation: VAL-025.
+
 ### TASK-040: Validate candidate attempts
 
 Goal: attach validation report IDs and hard-gate results to candidate attempts.
@@ -430,13 +517,13 @@ Required validation: VAL-012, VAL-017.
 
 Goal: reject hard-gate failures, rank only eligible candidates, and persist selected or failed final decision.
 
-Required validation: VAL-012, VAL-013, VAL-014, VAL-022, VAL-023, VAL-024.
+Required validation: VAL-012, VAL-013, VAL-014, VAL-022, VAL-023, VAL-024, VAL-025.
 
 ### TASK-042: Adapt selected candidate
 
 Goal: expose the selected candidate as a normal validated Stitch artifact while preserving lineage.
 
-Required validation: VAL-014, VAL-018, VAL-019.
+Required validation: VAL-014, VAL-018, VAL-019, VAL-025.
 
 ### TASK-050: Implement targeted reprompt
 
@@ -454,7 +541,7 @@ Required validation: VAL-009, VAL-016.
 
 Goal: persist candidate run, attempts, prompt plans, prompts, HTML, validation reports, selection report, rejected report, and selected manifest.
 
-Required validation: VAL-017, VAL-018.
+Required validation: VAL-017, VAL-018, VAL-025.
 
 ### TASK-061: Persist selected candidate evidence
 
@@ -480,7 +567,7 @@ Required validation: VAL-003, VAL-011, VAL-015.
 
 Goal: prove candidate lineage does not break default artifact consumers.
 
-Required validation: VAL-018, VAL-019.
+Required validation: VAL-018, VAL-019, VAL-025.
 
 ## Validation Catalog
 
@@ -751,6 +838,24 @@ only explicitly disallowed navigation forces navigation_clarity to 0.0.
 page-id targets are matched through explicit page-id markers or explicit route resolver evidence, not guessed routes.
 ```
 
+### VAL-025: Stitch output capability probe
+
+Command:
+
+```bash
+npm test
+```
+
+Claim:
+
+```text
+Stitch output capability probes record whether the current workflow can produce single HTML, inline JS, external CSS/JS, multi-file bundles, and multiple linked HTML pages.
+Candidate artifact contracts are not expanded beyond one Stitch HTML artifact until the probe records observed evidence and the persistence/runtime validators support the new shape.
+Inline JS interactions, if supported, are validated by runtime evidence before being treated as interaction behavior.
+Multi-file or multi-page outputs, if supported, are treated as bundles and require explicit persistence, serving, validation, and selected-candidate adaptation support.
+navigation_clarity remains a presentation-level soft score until runtime or cross-page validation proves real navigation behavior.
+```
+
 ## Release Validation
 
 Before handoff, run:
@@ -771,6 +876,7 @@ Deterministic postprocess uses postprocess.allowedFixes.
 Static, runtime, and cross-page validation contracts pass.
 Default validation does not regenerate HTML.
 Candidate mode creates bounded prompt plans and attempts.
+Stitch output shape assumptions are backed by capability probe evidence before artifact contracts expand.
 Hard gate failures cannot be selected.
 Soft scores cannot override hard gate failures.
 Candidate ranking contracts are strict, deterministic, explicitly scored, hardened against ambiguous score inputs, and avoid unresolved-navigation false negatives.
