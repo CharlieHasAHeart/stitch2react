@@ -6,7 +6,7 @@ This document defines validation, runtime checking, deterministic HTML postproce
 
 This stage consumes generated Stitch HTML artifacts and never mutates the frozen blueprint. It owns validation, deterministic postprocess, cross-page checks, candidate selection gates, and final gate decisions.
 
-Experimental candidate-search generation is defined in `docs/stitch-candidate-search-stage.md`. This document defines how validation reports are consumed by that experimental mode without changing the default validation contract.
+Experimental candidate generation is defined in `docs/stitch-candidate-search-stage.md`. This document defines how validation reports are consumed by that experimental mode without changing the default validation contract.
 
 ## Validation Layers
 
@@ -142,7 +142,7 @@ Runtime evidence must not become a product source of truth. It is downstream val
 
 ## Candidate Selection Gate
 
-In experimental candidate-search mode, validation may run against multiple candidate HTML artifacts for the same `PageContract`.
+In experimental candidate mode, validation may run against multiple candidate HTML artifacts for the same `PageContract`.
 
 The candidate selection gate consumes validation reports and produces either:
 
@@ -182,9 +182,9 @@ console_runtime_error
 
 Soft scores may be used only to rank candidates that already pass hard gates.
 
-## Deterministic Postprocess
+## Deterministic HTML Postprocess
 
-Codex SDK postprocess is not LLM repair.
+Postprocess is local deterministic HTML patching. It is not Codex SDK repair, not LLM repair, and not product reinterpretation.
 
 It may apply only local deterministic fixes.
 
@@ -204,7 +204,7 @@ validator
 The contract is:
 
 - issue codes select candidate fixes
-- `src/stitch/constraints/stitch-ui-constraints.yaml` decides which fixes are enabled
+- `src/stitch/constraints/stitch-ui-constraints.yaml` decides which fixes are enabled through `postprocess.allowedFixes`
 - each fix must decide for itself whether the current HTML is safe and applicable to patch
 - a candidate fix may be rejected even when its issue code is present
 - postprocess must record both `appliedFixes` and `rejectedFixes`
@@ -275,7 +275,7 @@ Do not ask an LLM to patch the existing HTML in the default path.
 
 ## Targeted Reprompt Policy
 
-Targeted reprompt is allowed only in experimental candidate-search mode.
+Targeted reprompt is allowed only in experimental candidate mode.
 
 Targeted reprompt may use:
 
@@ -300,8 +300,8 @@ free-form product reinterpretation
 Targeted reprompt must be bounded by explicit runtime configuration, such as:
 
 ```text
-maxRepromptAttemptsPerPage
-maxCandidatesPerAttempt
+maxRepromptAttempts
+maxCandidatesPerReprompt
 ```
 
 The default validation-and-repair path remains deterministic and does not call Stitch generation after validation failure.
@@ -318,8 +318,8 @@ Page-level artifacts:
 - stitch_html_validation_report
 - stitch_html_postprocess_report
 
-Candidate-search artifacts, experimental only:
-- stitch_candidate_search_run
+Candidate artifacts, experimental only:
+- stitch_candidate_run
 - stitch_candidate_attempt
 - candidate_selection_report
 - rejected_candidate_report
@@ -343,10 +343,10 @@ validated_stitch_artifact_gate_report
 stitch_final_validation_gate_report
 ```
 
-Persist in experimental candidate-search mode:
+Persist in experimental candidate mode:
 
 ```text
-stitch_candidate_search_run
+stitch_candidate_run
 candidate_selection_report
 selected_candidate_validation_reports
 rejected_candidate_reports
