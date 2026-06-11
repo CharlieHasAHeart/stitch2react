@@ -8,6 +8,7 @@
     "test": "vitest run",
     "blueprint:generate": "npm run build && node dist/src/cli/generate-blueprint.js",
     "stitch:generate": "npm run build && node dist/src/cli/generate-stitch.js",
+    "stitch:probe": "npm run build && node dist/src/cli/probe-stitch-capabilities.js",
     "generate:all": "npm run build && node dist/src/cli/generate-all.js"
   },
   "dependencies": {

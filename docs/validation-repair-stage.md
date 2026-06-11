@@ -2,9 +2,11 @@
 
 ## Purpose
 
-This document defines validation, runtime checking, and deterministic HTML postprocess for Stitch-generated HTML.
+This document defines validation, runtime checking, deterministic HTML postprocess, and final gate decisions for Stitch-generated HTML.
 
-This stage consumes generated Stitch HTML artifacts and never mutates the frozen blueprint. It owns validation, deterministic postprocess, cross-page checks, and final gate decisions.
+This stage consumes generated Stitch HTML artifacts and never mutates the frozen blueprint. It owns validation, deterministic postprocess, cross-page checks, candidate selection gates, and final gate decisions.
+
+Experimental candidate generation is defined in `docs/stitch-candidate-search-stage.md`. This document defines how validation reports are consumed by that experimental mode without changing the default validation contract.
 
 ## Validation Layers
 
@@ -25,12 +27,14 @@ Static validation should check:
 ```text
 html_empty
 html_missing_visible_root
+html_missing_page_root_marker
 html_missing_heading
 missing_primary_action
 missing_secondary_action
 missing_feedback_surface
 missing_recovery_surface
 invented_navigation
+undeclared_navigation_destination
 ```
 
 Static validation should not try to prove that a click has real behavior.
@@ -134,9 +138,53 @@ type StitchRuntimeValidationEvidence = {
 };
 ```
 
-## Deterministic Postprocess
+Runtime evidence must not become a product source of truth. It is downstream validation evidence only.
 
-Codex SDK postprocess is not LLM repair.
+## Candidate Selection Gate
+
+In experimental candidate mode, validation may run against multiple candidate HTML artifacts for the same `PageContract`.
+
+The candidate selection gate consumes validation reports and produces either:
+
+```text
+selected candidate
+failure report with rejection reasons
+```
+
+The candidate selection gate must not:
+
+```text
+mutate the frozen blueprint
+reinterpret raw user input
+invent new product scope
+select a candidate with hard gate failures
+allow a soft score to override a hard gate failure
+```
+
+A candidate with any hard gate failure is ineligible for selection even if it has the highest visual or design score.
+
+Hard gate failures include, but are not limited to:
+
+```text
+html_empty
+html_missing_visible_root
+html_missing_page_root_marker
+missing_primary_action
+missing_secondary_action
+missing_feedback_surface
+missing_recovery_surface
+invented_navigation
+undeclared_navigation_destination
+blank_rendered_page
+blocking_overlay
+console_runtime_error
+```
+
+Soft scores may be used only to rank candidates that already pass hard gates.
+
+## Deterministic HTML Postprocess
+
+Postprocess is local deterministic HTML patching. It is not Codex SDK repair, not LLM repair, and not product reinterpretation.
 
 It may apply only local deterministic fixes.
 
@@ -156,7 +204,7 @@ validator
 The contract is:
 
 - issue codes select candidate fixes
-- `src/stitch/constraints/stitch-ui-constraints.yaml` decides which fixes are enabled
+- `src/stitch/constraints/stitch-ui-constraints.yaml` decides which fixes are enabled through `postprocess.allowedFixes`
 - each fix must decide for itself whether the current HTML is safe and applicable to patch
 - a candidate fix may be rejected even when its issue code is present
 - postprocess must record both `appliedFixes` and `rejectedFixes`
@@ -225,6 +273,39 @@ If the same issue remains, do not loop indefinitely.
 
 Do not ask an LLM to patch the existing HTML in the default path.
 
+## Targeted Reprompt Policy
+
+Targeted reprompt is allowed only in experimental candidate mode.
+
+Targeted reprompt may use:
+
+```text
+PageContract
+previous StitchPromptPlan
+previous validation issue codes
+previous candidate diagnostics
+compiled Stitch prompt constraints
+```
+
+Targeted reprompt must not use:
+
+```text
+raw user input
+new product requirements
+vague semantic preferences
+unbounded style requests
+free-form product reinterpretation
+```
+
+Targeted reprompt must be bounded by explicit runtime configuration, such as:
+
+```text
+maxRepromptAttempts
+maxCandidatesPerReprompt
+```
+
+The default validation-and-repair path remains deterministic and does not call Stitch generation after validation failure.
+
 ## Validation and Repair Artifacts
 
 Artifact layers are:
@@ -237,6 +318,12 @@ Page-level artifacts:
 - stitch_html_validation_report
 - stitch_html_postprocess_report
 
+Candidate artifacts, experimental only:
+- stitch_candidate_run
+- stitch_candidate_attempt
+- candidate_selection_report
+- rejected_candidate_report
+
 Bundle-level artifacts:
 - stitch_cross_page_validation_report
 - project_bundle_manifest
@@ -245,7 +332,7 @@ Final gate artifact:
 - stitch_final_validation_gate_report
 ```
 
-Persist:
+Persist in the default path:
 
 ```text
 stitch_html_validation_report
@@ -256,31 +343,13 @@ validated_stitch_artifact_gate_report
 stitch_final_validation_gate_report
 ```
 
+Persist in experimental candidate mode:
+
+```text
+stitch_candidate_run
+candidate_selection_report
+selected_candidate_validation_reports
+rejected_candidate_reports
+```
+
 These are downstream artifacts only.
-
-They must reference the frozen `blueprintId` and must not mutate `ProductBlueprintV1`.
-
-## Final Validation Gate
-
-The final validation gate is the only stage that decides whether the generated Stitch HTML bundle is deliverable.
-
-It consumes:
-
-- page-level static/runtime validation reports
-- runtime backend authority status
-- postprocess reports
-- bundle-level cross-page validation report
-
-It produces:
-
-- `stitch_final_validation_gate_report`
-
-The final gate must not:
-
-- mutate HTML
-- regenerate HTML
-- call Stitch
-- reinterpret raw input
-- mutate the frozen blueprint
-
-A page can pass page-level validation but still fail the final gate if cross-page validation fails.
