@@ -266,10 +266,68 @@ hard-gates.ts:
 
 soft-scores.ts:
 - CandidateSoftScores must use the fixed SoftScoreKey set, not arbitrary Record<string, number>.
-- soft score values must be deterministic and bounded.
+- soft score values must be deterministic, finite numbers in the inclusive range 0..1.
 - rankEligibleCandidateAttempts must not silently filter hard-gate-failed attempts.
 - rankEligibleCandidateAttempts must fail fast when any input attempt is not hard-gate eligible.
 - ranking tie-breaker must be stable: totalScore descending, candidateIndex ascending, attemptId ascending.
+```
+
+Soft score calculation, first implementation:
+
+```text
+Input signals may come only from generated candidate HTML, PageContract expectations, and validation reports.
+Input signals must not come from raw user input, unfrozen blueprint drafts, screenshots, LLM judgment, or external visual models.
+
+Each soft score key returns a number from 0 to 1.
+Missing or unmeasurable signals return 0, not an inferred value.
+Scores are rule-based heuristics for ranking eligible candidates only; they do not prove correctness.
+```
+
+Required score keys and rules:
+
+```text
+design_consistency:
+  1.0 when repeated structural primitives are internally consistent across the candidate HTML.
+  0.5 when structure is mostly consistent but has minor naming/class/section irregularity.
+  0.0 when the candidate lacks enough repeated structure to assess consistency.
+
+information_hierarchy:
+  1.0 when the candidate has a clear heading plus distinguishable primary content sections.
+  0.5 when heading or section hierarchy exists but is shallow or partially ambiguous.
+  0.0 when there is no meaningful heading/section hierarchy.
+
+visual_polish:
+  1.0 when the candidate contains non-empty styling hooks/classes/semantic layout containers sufficient for a polished render.
+  0.5 when styling hooks exist but are sparse.
+  0.0 when the HTML is mostly unstyled structural markup.
+
+density_fit:
+  1.0 when rendered content density matches the PageContract role: forms/detail pages are not overloaded, dashboard pages are not sparse.
+  0.5 when density is acceptable but underfilled or slightly crowded.
+  0.0 when density clearly conflicts with the page role or required content.
+
+enterprise_saas_fit:
+  1.0 when the candidate uses enterprise-appropriate semantic UI structure: clear action area, status/feedback surfaces, navigation discipline, and workflow framing.
+  0.5 when some enterprise UI structure is present but incomplete.
+  0.0 when the candidate reads as generic static content without workflow framing.
+
+component_clarity:
+  1.0 when required actions, inputs, feedback, and recovery surfaces are represented as distinct semantic components.
+  0.5 when required components exist but are visually or structurally hard to distinguish.
+  0.0 when required components collapse into undifferentiated markup.
+
+navigation_clarity:
+  1.0 when declared navigation targets are clear, consistent, and limited to allowed routes.
+  0.5 when navigation is present but secondary or not clearly grouped.
+  0.0 when no meaningful declared navigation structure exists.
+```
+
+Total score rule:
+
+```text
+totalScore = average of all required soft score keys.
+Do not use sum as the final score, because adding future keys would change score scale.
+Do not weight dimensions in the first implementation.
 ```
 
 Out of scope:
@@ -278,6 +336,7 @@ Out of scope:
 - Do not implement final candidate selection here.
 - Do not persist selected manifests here.
 - Do not introduce screenshot, LLM, or visual-model scoring.
+- Do not use soft scores to repair or rewrite HTML.
 ```
 
 Required validation: VAL-012, VAL-013, VAL-022.
@@ -570,7 +629,9 @@ Claim:
 ```text
 soft score ranking rejects hard-gate-failed input instead of silently filtering it.
 CandidateSoftScores uses fixed SoftScoreKey keys.
-soft score values are deterministic and bounded.
+soft score values are deterministic, finite, and bounded to 0..1.
+each required soft score key is calculated by the documented first-implementation rule.
+totalScore is the unweighted average of all required soft score keys.
 tie-breaker order is totalScore desc, candidateIndex asc, attemptId asc.
 ```
 
@@ -596,7 +657,7 @@ Default validation does not regenerate HTML.
 Candidate mode creates bounded prompt plans and attempts.
 Hard gate failures cannot be selected.
 Soft scores cannot override hard gate failures.
-Candidate ranking contracts are strict and deterministic.
+Candidate ranking contracts are strict, deterministic, and explicitly scored.
 Rejected candidate diagnostics are persisted.
 Targeted reprompt uses issue codes only and respects budgets.
 Selected candidate lineage and default artifact compatibility are preserved.
