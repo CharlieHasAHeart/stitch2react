@@ -29,3 +29,5 @@ export * from "../stitch/pipeline/generate-validated-stitch-bundle.js";
 export * from "../stitch/pipeline/generate-stitch-html-artifacts.js";
 export * from "../stitch/pipeline/validate-repair-stitch-html-artifacts.js";
 export * from "../stitch/pipeline/build-project-bundle-manifest.js";
+export * from "../stitch/candidate-search/hard-gates.js";
+export * from "../stitch/candidate-search/soft-scores.js";

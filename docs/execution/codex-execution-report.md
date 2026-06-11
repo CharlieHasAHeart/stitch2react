@@ -34,3 +34,20 @@ Validation result:
 - Passed. `npm test` completed successfully with 66/66 tests passing.
 Blockers or follow-up notes:
 - After `git pull`, the execution spine changed the generation-config contract from the earlier `experimentalCandidateSearch.enabled` shape to `mode: "candidate"` in `src/stitch/config/stitch-generation-config.yaml`, and the postprocess allowlist field is now `postprocess.allowedFixes`. The implementation and tests were aligned to the updated contract only.
+
+Task ID: TASK-003
+Status: completed
+Summary of implementation: Added reusable candidate hard-gate utilities for documented hard-failure issue codes and deterministic soft-score helpers that rank only hard-gate-passing attempts. Added focused candidate-search tests proving hard-gate failures are ineligible and soft scores only affect already-eligible attempts.
+Files changed:
+- src/stitch/candidate-search/hard-gates.ts
+- src/stitch/candidate-search/soft-scores.ts
+- src/blueprint/index.ts
+- tests/stitch-candidate-search.test.ts
+Validation commands run:
+- npm run build
+- npm test
+Validation result:
+- Passed. `npm run build` completed successfully.
+- Passed. `npm test` completed successfully with 69/69 tests passing.
+Blockers or follow-up notes:
+- Soft-score behavior is intentionally deterministic and rule-based at this stage; no visual or screenshot scoring was introduced.
