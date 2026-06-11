@@ -229,7 +229,7 @@ Hard gates may be expanded over time, but a soft score must never override a har
 
 Soft scores are used only to rank candidates that pass all hard gates.
 
-Recommended soft scores:
+Required soft score keys:
 
 ```text
 design_consistency
@@ -241,9 +241,175 @@ component_clarity
 navigation_clarity
 ```
 
-Soft scores should be deterministic or rule-based when possible.
+Soft scores must be deterministic and rule-based in the first implementation. They must not use screenshots, LLM judgment, external visual models, raw user input, or unfrozen blueprint drafts.
 
-If a score uses a screenshot or visual analysis artifact, the screenshot remains evaluation evidence only. It must not become a product source of truth.
+### Soft Score Implementation Boundary
+
+The soft-score implementation belongs in:
+
+```text
+src/stitch/candidate-search/soft-scores.ts
+```
+
+That file must not only consume precomputed `softScores`. It must own the first implementation of reading generated candidate HTML structure and converting that structure into deterministic scores.
+
+Required public functions:
+
+```ts
+export function extractSoftScoreSignals(input: {
+  html: string;
+  pageContract: PageContract;
+  validationIssueCodes?: readonly string[];
+}): CandidateSoftScoreSignals;
+
+export function scoreCandidateSignals(
+  signals: CandidateSoftScoreSignals
+): CandidateSoftScores;
+
+export function scoreCandidateHtml(input: {
+  html: string;
+  pageContract: PageContract;
+  validationIssueCodes?: readonly string[];
+}): CandidateSoftScores;
+```
+
+Function ownership:
+
+```text
+extractSoftScoreSignals:
+  Reads generated candidate HTML plus PageContract expectations and validation issue codes.
+  Extracts measurable structural signals only.
+  Does not assign final scores.
+
+scoreCandidateSignals:
+  Converts extracted structural signals into the seven required 0..1 score keys.
+  Does not parse HTML.
+  Does not read candidate attempts.
+
+scoreCandidateHtml:
+  Convenience wrapper that calls extractSoftScoreSignals and scoreCandidateSignals.
+  This is the default function candidate orchestration should use when computing attempt.softScores.
+```
+
+`rankEligibleCandidateAttempts` must only rank attempts whose `softScores` have already been produced by `scoreCandidateHtml` or an equivalent deterministic path. It must not invent missing scores during ranking.
+
+### CandidateSoftScoreSignals Contract
+
+The first implementation should define an explicit signal object rather than scattering ad hoc HTML checks across score functions.
+
+Recommended signal shape:
+
+```ts
+type CandidateSoftScoreSignals = {
+  headingCount: number;
+  sectionCount: number;
+  semanticContainerCount: number;
+  repeatedStructureGroupCount: number;
+  consistentRepeatedStructureGroupCount: number;
+  styledElementCount: number;
+  totalElementCount: number;
+  requiredActionCount: number;
+  representedRequiredActionCount: number;
+  requiredFeedbackSurfaceCount: number;
+  representedFeedbackSurfaceCount: number;
+  requiredRecoverySurfaceCount: number;
+  representedRecoverySurfaceCount: number;
+  allowedNavigationTargetCount: number;
+  representedAllowedNavigationTargetCount: number;
+  declaredNavigationElementCount: number;
+  disallowedNavigationTargetCount: number;
+  pageRole: "dashboard" | "form" | "detail" | "workflow" | "empty-state" | "unknown";
+  approximateContentBlockCount: number;
+};
+```
+
+Signal extraction rules:
+
+```text
+- Parse only the generated candidate HTML.
+- Compare only against PageContract expectations and validation issue codes.
+- Count structural evidence such as headings, sections, semantic containers, classed layout hooks, required actions, feedback surfaces, recovery surfaces, and declared navigation targets.
+- Missing or unmeasurable evidence must be represented as zero-valued signals.
+- Disallowed navigation evidence must remain visible as disallowedNavigationTargetCount and must not be hidden by scoring.
+```
+
+### Soft Score Calculation Rules
+
+Each score key returns a finite number in the inclusive range 0..1.
+
+Use only these first-implementation buckets:
+
+```text
+0.0 = missing, unmeasurable, or clearly conflicting structural evidence
+0.5 = partially present or ambiguous structural evidence
+1.0 = clear structural evidence matching the PageContract expectation
+```
+
+Required rules:
+
+```text
+design_consistency:
+  1.0 when repeatedStructureGroupCount > 0 and all repeated groups are consistent.
+  0.5 when repeatedStructureGroupCount > 0 and some, but not all, repeated groups are consistent.
+  0.0 when repeatedStructureGroupCount is 0.
+
+information_hierarchy:
+  1.0 when headingCount >= 1 and sectionCount >= 2.
+  0.5 when headingCount >= 1 or sectionCount >= 1.
+  0.0 when headingCount is 0 and sectionCount is 0.
+
+visual_polish:
+  1.0 when semanticContainerCount >= 2 and styledElementCount / totalElementCount >= 0.5.
+  0.5 when semanticContainerCount >= 1 or styledElementCount / totalElementCount >= 0.25.
+  0.0 when there are no meaningful styling hooks or semantic layout containers.
+
+density_fit:
+  1.0 when approximateContentBlockCount is within the expected range for the PageContract role.
+  0.5 when approximateContentBlockCount is slightly below or above the expected range.
+  0.0 when approximateContentBlockCount clearly conflicts with the PageContract role.
+
+enterprise_saas_fit:
+  1.0 when representedRequiredActionCount, representedFeedbackSurfaceCount, and semanticContainerCount all show workflow-oriented UI structure.
+  0.5 when at least two of those three signal groups are present.
+  0.0 when fewer than two of those signal groups are present.
+
+component_clarity:
+  1.0 when required actions, feedback surfaces, and recovery surfaces are represented as distinct structural components when required by the PageContract.
+  0.5 when those components exist but are not clearly separated.
+  0.0 when required components collapse into undifferentiated markup or are missing.
+
+navigation_clarity:
+  1.0 when representedAllowedNavigationTargetCount > 0, declaredNavigationElementCount > 0, and disallowedNavigationTargetCount is 0.
+  0.5 when allowed navigation exists but is not clearly grouped, and disallowedNavigationTargetCount is 0.
+  0.0 when there is no meaningful allowed navigation structure or any disallowed navigation target is present.
+```
+
+Density role ranges for the first implementation:
+
+```text
+dashboard:     6..14 approximate content blocks
+form:          3..10 approximate content blocks
+detail:        4..12 approximate content blocks
+workflow:      4..12 approximate content blocks
+empty-state:   2..6 approximate content blocks
+unknown:       3..12 approximate content blocks
+```
+
+Total score rule:
+
+```text
+totalScore = average of all seven required soft score keys.
+Do not use sum as the final score.
+Do not weight dimensions in the first implementation.
+```
+
+Tie-breaker order:
+
+```text
+1. totalScore descending
+2. candidateIndex ascending
+3. attemptId ascending
+```
 
 ## Screenshot and Visual Evidence
 
@@ -395,6 +561,9 @@ candidate mode preserves frozen blueprint as sole product source
 candidate mode creates bounded prompt plans
 candidate with hard gate failure cannot be selected
 soft score cannot override hard gate failure
+soft score extraction reads generated HTML structure through extractSoftScoreSignals
+scoreCandidateHtml produces all required 0..1 soft score keys
+ranked candidates use average score and deterministic tie-breakers
 rejected candidates persist rejection reasons
 targeted reprompt uses issue codes only
 candidate lineage is persisted
