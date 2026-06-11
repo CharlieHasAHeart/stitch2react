@@ -69,3 +69,19 @@ Validation result:
 - Passed. `npm test` completed successfully with 71/71 tests passing.
 Blockers or follow-up notes:
 - This task was completed before TASK-004 because the updated execution spine and candidate-stage documentation expanded TASK-034 into the contract owner for deterministic HTML signal extraction and strict ranking behavior required by downstream candidate orchestration.
+
+Task ID: TASK-035
+Status: completed
+Summary of implementation: Hardened candidate soft-score schemas and implementation details by constraining persisted score values to finite 0..1 numbers, removing ignored soft-score inputs, scoring navigation against resolved route targets only, preserving unresolved navigation as visible disallowed evidence, preventing component_clarity from reaching 1.0 without positive required-component evidence, and requiring exact bucket values 0/0.5/1 in deterministic score construction.
+Files changed:
+- src/stitch/candidate-search/soft-scores.ts
+- src/blueprint/schemas/blueprint.ts
+- tests/stitch-candidate-search.test.ts
+Validation commands run:
+- npm run build
+- npm test
+Validation result:
+- passed (`npm run build`)
+- passed (`npm test`, 75/75 tests)
+Blockers or follow-up notes:
+- Navigation soft scoring now treats slash-prefixed `targetPageId` values as resolved routes and keeps non-route targets visible as unresolved/disallowed evidence until a later task introduces explicit page-id-to-route resolution.

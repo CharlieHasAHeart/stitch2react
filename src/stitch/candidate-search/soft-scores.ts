@@ -18,6 +18,7 @@ export type CandidateSoftScoreSignals = {
   headingCount: number;
   sectionCount: number;
   semanticContainerCount: number;
+  groupedNavigationContainerCount: number;
   repeatedStructureGroupCount: number;
   consistentRepeatedStructureGroupCount: number;
   styledElementCount: number;
@@ -36,6 +37,11 @@ export type CandidateSoftScoreSignals = {
   approximateContentBlockCount: number;
 };
 
+type AllowedNavigationTargets = {
+  routes: Set<string>;
+  unresolvedTargets: Set<string>;
+};
+
 const DENSITY_RANGES: Record<CandidateSoftScoreSignals["pageRole"], { min: number; max: number }> = {
   dashboard: { min: 6, max: 14 },
   form: { min: 3, max: 10 },
@@ -48,16 +54,6 @@ const DENSITY_RANGES: Record<CandidateSoftScoreSignals["pageRole"], { min: numbe
 const STYLED_ATTR_KEYS = ["class", "className", "style", "data-variant", "data-tone", "data-size"] as const;
 const SEMANTIC_CONTAINER_TAGS = new Set(["main", "section", "article", "aside", "nav", "header", "footer", "form"]);
 const CONTENT_BLOCK_TAGS = new Set(["section", "article", "aside", "nav", "form", "table", "ul", "ol", "dl", "fieldset", "main"]);
-
-function clampBucket(value: number): 0 | 0.5 | 1 {
-  if (!Number.isFinite(value) || value <= 0) {
-    return 0;
-  }
-  if (value >= 1) {
-    return 1;
-  }
-  return 0.5;
-}
 
 function derivePageRole(pageContract: PageContract): CandidateSoftScoreSignals["pageRole"] {
   const purpose = `${pageContract.name} ${pageContract.purpose}`.toLowerCase();
@@ -85,6 +81,25 @@ function expectedActionTexts(pageContract: PageContract): string[] {
     ...(pageContract.primaryAction ? [pageContract.primaryAction.label] : []),
     ...pageContract.secondaryActions.map((action) => action.label)
   ].map((item) => item.trim().toLowerCase());
+}
+
+function resolveAllowedNavigationTargets(pageContract: PageContract): AllowedNavigationTargets {
+  const routes = new Set<string>();
+  const unresolvedTargets = new Set<string>();
+
+  for (const action of pageContract.secondaryActions) {
+    const target = action.targetPageId?.trim();
+    if (!target) {
+      continue;
+    }
+    if (target.startsWith("/")) {
+      routes.add(target);
+    } else {
+      unresolvedTargets.add(target);
+    }
+  }
+
+  return { routes, unresolvedTargets };
 }
 
 function countRepresentedRequiredActions(pageContract: PageContract, actionTexts: string[]): number {
@@ -133,37 +148,32 @@ function countContentBlocks(tree: ReturnType<typeof parseStitchHtml>): number {
 export function extractSoftScoreSignals(input: {
   html: string;
   pageContract: PageContract;
-  validationIssueCodes?: readonly string[];
 }): CandidateSoftScoreSignals {
   const tree = parseStitchHtml(input.html);
   const headings = findHeadings(tree);
   const sections = findElements(tree, (node) => node.tagName === "section");
   const semanticContainers = findElements(tree, (node) => SEMANTIC_CONTAINER_TAGS.has(node.tagName));
+  const groupedNavigationContainers = findElements(tree, (node) => node.tagName === "nav");
   const actions = findActionElements(tree);
   const feedbackSurfaces = findFeedbackSurfaces(tree);
   const recoverySurfaces = findRecoverySurfaces(tree);
   const navigationLinks = findNavigationLinks(tree);
   const repeated = analyzeRepeatedStructures(tree);
   const totalElements = findElements(tree, () => true).length;
-  const declaredRoutes = new Set(input.pageContract.secondaryActions.map((action) => action.targetPageId).filter(Boolean));
   const actionTexts = actions.map((action) => action.text.trim().toLowerCase()).filter(Boolean);
   const pageRole = derivePageRole(input.pageContract);
+  const allowedNavigationTargets = resolveAllowedNavigationTargets(input.pageContract);
 
   let representedAllowedNavigationTargetCount = 0;
   let disallowedNavigationTargetCount = 0;
   let declaredNavigationElementCount = 0;
-  const allowedNavigationTargets = new Set(
-    input.pageContract.secondaryActions
-      .map((action) => action.targetPageId)
-      .filter((value): value is string => typeof value === "string" && value.length > 0)
-  );
 
   for (const link of navigationLinks) {
     if (!link.href?.startsWith("/")) {
       continue;
     }
     declaredNavigationElementCount += 1;
-    if (allowedNavigationTargets.has(link.href)) {
+    if (allowedNavigationTargets.routes.has(link.href)) {
       representedAllowedNavigationTargetCount += 1;
     } else {
       disallowedNavigationTargetCount += 1;
@@ -174,6 +184,7 @@ export function extractSoftScoreSignals(input: {
     headingCount: headings.length,
     sectionCount: sections.length,
     semanticContainerCount: semanticContainers.length,
+    groupedNavigationContainerCount: groupedNavigationContainers.length,
     repeatedStructureGroupCount: repeated.groupCount,
     consistentRepeatedStructureGroupCount: repeated.consistentGroupCount,
     styledElementCount: countStyledElements(tree),
@@ -184,10 +195,10 @@ export function extractSoftScoreSignals(input: {
     representedFeedbackSurfaceCount: feedbackSurfaces.length,
     requiredRecoverySurfaceCount: input.pageContract.recoverySurfaces.length,
     representedRecoverySurfaceCount: recoverySurfaces.length,
-    allowedNavigationTargetCount: allowedNavigationTargets.size,
+    allowedNavigationTargetCount: allowedNavigationTargets.routes.size + allowedNavigationTargets.unresolvedTargets.size,
     representedAllowedNavigationTargetCount,
     declaredNavigationElementCount,
-    disallowedNavigationTargetCount,
+    disallowedNavigationTargetCount: disallowedNavigationTargetCount + allowedNavigationTargets.unresolvedTargets.size,
     pageRole,
     approximateContentBlockCount: countContentBlocks(tree)
   };
@@ -206,6 +217,15 @@ export function scoreCandidateSignals(signals: CandidateSoftScoreSignals): Candi
   ].filter(Boolean).length;
   const hasRecoveryRequirement = signals.requiredRecoverySurfaceCount > 0;
   const representedRecovery = signals.representedRecoverySurfaceCount > 0;
+  const hasPositiveRequiredComponentEvidence =
+    signals.requiredActionCount > 0 ||
+    signals.requiredFeedbackSurfaceCount > 0 ||
+    signals.requiredRecoverySurfaceCount > 0;
+  const hasPositiveRepresentedSemanticEvidence =
+    signals.representedRequiredActionCount > 0 ||
+    signals.representedFeedbackSurfaceCount > 0 ||
+    representedRecovery ||
+    signals.semanticContainerCount >= 2;
 
   const scores = {
     design_consistency:
@@ -239,17 +259,19 @@ export function scoreCandidateSignals(signals: CandidateSoftScoreSignals): Candi
           ? 0.5
           : 0,
     component_clarity:
+      hasPositiveRequiredComponentEvidence &&
       signals.representedRequiredActionCount >= signals.requiredActionCount &&
       signals.representedFeedbackSurfaceCount >= signals.requiredFeedbackSurfaceCount &&
       (!hasRecoveryRequirement || representedRecovery)
         ? 1
-        : signals.representedRequiredActionCount > 0 || signals.representedFeedbackSurfaceCount > 0 || representedRecovery
+        : hasPositiveRepresentedSemanticEvidence
           ? 0.5
           : 0,
     navigation_clarity:
       signals.representedAllowedNavigationTargetCount > 0 &&
       signals.declaredNavigationElementCount > 0 &&
-      signals.disallowedNavigationTargetCount === 0
+      signals.disallowedNavigationTargetCount === 0 &&
+      signals.groupedNavigationContainerCount > 0
         ? 1
         : signals.representedAllowedNavigationTargetCount > 0 && signals.disallowedNavigationTargetCount === 0
           ? 0.5
@@ -262,7 +284,6 @@ export function scoreCandidateSignals(signals: CandidateSoftScoreSignals): Candi
 export function scoreCandidateHtml(input: {
   html: string;
   pageContract: PageContract;
-  validationIssueCodes?: readonly string[];
 }): CandidateSoftScores {
   return scoreCandidateSignals(extractSoftScoreSignals(input));
 }
@@ -276,7 +297,10 @@ export function makeDeterministicSoftScores(
     if (!Number.isFinite(value) || value < 0 || value > 1) {
       throw new Error(`Soft score ${key} must be a finite number in the range 0..1.`);
     }
-    scores[key] = clampBucket(value);
+    if (value !== 0 && value !== 0.5 && value !== 1) {
+      throw new Error(`Soft score ${key} must use an exact bucket value: 0, 0.5, or 1.`);
+    }
+    scores[key] = value;
   }
   return scores;
 }

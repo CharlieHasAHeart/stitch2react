@@ -626,13 +626,13 @@ export const softScoreKeySchema = z.enum([
 ]);
 
 export const candidateSoftScoresSchema = z.object({
-  design_consistency: z.number(),
-  information_hierarchy: z.number(),
-  visual_polish: z.number(),
-  density_fit: z.number(),
-  enterprise_saas_fit: z.number(),
-  component_clarity: z.number(),
-  navigation_clarity: z.number()
+  design_consistency: z.number().finite().min(0).max(1),
+  information_hierarchy: z.number().finite().min(0).max(1),
+  visual_polish: z.number().finite().min(0).max(1),
+  density_fit: z.number().finite().min(0).max(1),
+  enterprise_saas_fit: z.number().finite().min(0).max(1),
+  component_clarity: z.number().finite().min(0).max(1),
+  navigation_clarity: z.number().finite().min(0).max(1)
 });
 
 export const stitchCandidatePromptPlanSchema = z.object({
