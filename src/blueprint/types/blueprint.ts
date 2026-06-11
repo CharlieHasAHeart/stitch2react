@@ -441,8 +441,16 @@ export type ArtifactType =
   | "repair_guard_report"
   | "quality_repair_candidate"
   | "stitch_prompt_plan"
+  | "stitch_candidate_prompt_plan"
   | "stitch_page_prompt"
+  | "stitch_candidate_prompt"
   | "stitch_html"
+  | "stitch_candidate_html"
+  | "stitch_candidate_attempt"
+  | "stitch_candidate_run"
+  | "candidate_selection_report"
+  | "rejected_candidate_report"
+  | "selected_candidate_manifest"
   | "stitch_html_validation_report"
   | "stitch_runtime_validation_report"
   | "stitch_cross_page_validation_report"
@@ -679,6 +687,99 @@ export type StitchPromptPlan = {
   sessionId: string;
   blueprintId: string;
   pages: StitchPromptPlanPage[];
+};
+
+export type StitchCandidatePromptPlanMode = "initial" | "candidate" | "targeted-reprompt";
+export type StitchCandidateGenerationGoal = "structure" | "balanced" | "visual-polish" | "dense-dashboard";
+export type StitchCandidateLayoutIntent = "dashboard" | "form" | "detail" | "workflow" | "empty-state";
+
+export type StitchCandidatePromptPlan = {
+  pageId: string;
+  pageRoute: string;
+  mode: StitchCandidatePromptPlanMode;
+  candidateIndex?: number;
+  generationGoal: StitchCandidateGenerationGoal;
+  layoutIntent: StitchCandidateLayoutIntent;
+  designSystemRef: string;
+  requiredMarkers: string[];
+  requiredActions: string[];
+  allowedNavigationTargets: string[];
+  forbiddenChanges: string[];
+  previousFailureCodes?: string[];
+};
+
+export type StitchCandidateAttempt = {
+  attemptId: string;
+  pageId: string;
+  candidateIndex: number;
+  promptPlanArtifactId: string;
+  promptArtifactId: string;
+  htmlArtifactId: string;
+  staticValidationReportId?: string;
+  runtimeValidationReportId?: string;
+  crossPageValidationReportId?: string;
+  postprocessReportId?: string;
+  hardGateResult: "pass" | "fail";
+  hardGateIssues: string[];
+  softScores?: Record<string, number>;
+  rejectionReasons: string[];
+};
+
+export type StitchCandidateRun = {
+  runId: string;
+  pageId: string;
+  mode: "candidate";
+  candidateCount: number;
+  attempts: StitchCandidateAttempt[];
+  selectedAttemptId?: string;
+  finalDecision: "selected" | "failed";
+  failureReasons?: string[];
+};
+
+export type CandidateSelectionReport = {
+  id: string;
+  sessionId: string;
+  blueprintId: string;
+  pageId: string;
+  runId: string;
+  eligibleAttemptIds: string[];
+  rejectedAttemptIds: string[];
+  selectedAttemptId?: string;
+  finalDecision: "selected" | "failed";
+  failureReasons: string[];
+  createdAt: string;
+};
+
+export type RejectedCandidateReport = {
+  id: string;
+  sessionId: string;
+  blueprintId: string;
+  pageId: string;
+  attemptId: string;
+  hardGateIssues: string[];
+  rejectionReasons: string[];
+  staticValidationReportId?: string;
+  runtimeValidationReportId?: string;
+  crossPageValidationReportId?: string;
+  postprocessReportId?: string;
+  createdAt: string;
+};
+
+export type SelectedCandidateManifest = {
+  id: string;
+  sessionId: string;
+  blueprintId: string;
+  pageId: string;
+  runId: string;
+  selectedAttemptId: string;
+  promptPlanArtifactId: string;
+  promptArtifactId: string;
+  htmlArtifactId: string;
+  staticValidationReportId?: string;
+  runtimeValidationReportId?: string;
+  crossPageValidationReportId?: string;
+  postprocessReportId?: string;
+  createdAt: string;
 };
 
 export type StitchPagePromptArtifact = {

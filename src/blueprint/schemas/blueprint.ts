@@ -615,6 +615,95 @@ export const stitchPromptPlanSchema = z.object({
   pages: z.array(stitchPromptPlanPageSchema)
 });
 
+export const stitchCandidatePromptPlanSchema = z.object({
+  pageId: z.string(),
+  pageRoute: z.string(),
+  mode: z.enum(["initial", "candidate", "targeted-reprompt"]),
+  candidateIndex: z.number().int().nonnegative().optional(),
+  generationGoal: z.enum(["structure", "balanced", "visual-polish", "dense-dashboard"]),
+  layoutIntent: z.enum(["dashboard", "form", "detail", "workflow", "empty-state"]),
+  designSystemRef: z.string(),
+  requiredMarkers: z.array(z.string()),
+  requiredActions: z.array(z.string()),
+  allowedNavigationTargets: z.array(z.string()),
+  forbiddenChanges: z.array(z.string()),
+  previousFailureCodes: z.array(z.string()).optional()
+});
+
+export const stitchCandidateAttemptSchema = z.object({
+  attemptId: z.string(),
+  pageId: z.string(),
+  candidateIndex: z.number().int().nonnegative(),
+  promptPlanArtifactId: z.string(),
+  promptArtifactId: z.string(),
+  htmlArtifactId: z.string(),
+  staticValidationReportId: z.string().optional(),
+  runtimeValidationReportId: z.string().optional(),
+  crossPageValidationReportId: z.string().optional(),
+  postprocessReportId: z.string().optional(),
+  hardGateResult: z.enum(["pass", "fail"]),
+  hardGateIssues: z.array(z.string()),
+  softScores: z.record(z.number()).optional(),
+  rejectionReasons: z.array(z.string())
+});
+
+export const stitchCandidateRunSchema = z.object({
+  runId: z.string(),
+  pageId: z.string(),
+  mode: z.literal("candidate"),
+  candidateCount: z.number().int().nonnegative(),
+  attempts: z.array(stitchCandidateAttemptSchema),
+  selectedAttemptId: z.string().optional(),
+  finalDecision: z.enum(["selected", "failed"]),
+  failureReasons: z.array(z.string()).optional()
+});
+
+export const candidateSelectionReportSchema = z.object({
+  id: z.string(),
+  sessionId: z.string(),
+  blueprintId: z.string(),
+  pageId: z.string(),
+  runId: z.string(),
+  eligibleAttemptIds: z.array(z.string()),
+  rejectedAttemptIds: z.array(z.string()),
+  selectedAttemptId: z.string().optional(),
+  finalDecision: z.enum(["selected", "failed"]),
+  failureReasons: z.array(z.string()),
+  createdAt: z.string()
+});
+
+export const rejectedCandidateReportSchema = z.object({
+  id: z.string(),
+  sessionId: z.string(),
+  blueprintId: z.string(),
+  pageId: z.string(),
+  attemptId: z.string(),
+  hardGateIssues: z.array(z.string()),
+  rejectionReasons: z.array(z.string()),
+  staticValidationReportId: z.string().optional(),
+  runtimeValidationReportId: z.string().optional(),
+  crossPageValidationReportId: z.string().optional(),
+  postprocessReportId: z.string().optional(),
+  createdAt: z.string()
+});
+
+export const selectedCandidateManifestSchema = z.object({
+  id: z.string(),
+  sessionId: z.string(),
+  blueprintId: z.string(),
+  pageId: z.string(),
+  runId: z.string(),
+  selectedAttemptId: z.string(),
+  promptPlanArtifactId: z.string(),
+  promptArtifactId: z.string(),
+  htmlArtifactId: z.string(),
+  staticValidationReportId: z.string().optional(),
+  runtimeValidationReportId: z.string().optional(),
+  crossPageValidationReportId: z.string().optional(),
+  postprocessReportId: z.string().optional(),
+  createdAt: z.string()
+});
+
 export const stitchPagePromptArtifactSchema = z.object({
   sessionId: z.string(),
   blueprintId: z.string(),
