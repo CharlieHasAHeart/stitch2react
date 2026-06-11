@@ -1,0 +1,6 @@
+version: 1
+mode: "single"
+candidateSearch:
+  candidatesPerPage: 3
+  maxRepromptAttempts: 1
+  maxCandidatesPerReprompt: 2
