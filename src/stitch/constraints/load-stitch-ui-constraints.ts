@@ -1,8 +1,7 @@
 import { readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import { parse } from "yaml";
 import { z } from "zod";
+import { resolveStitchProjectFile } from "../shared/resolve-stitch-project-file.js";
 
 const stitchUiConstraintsSchema = z.object({
   version: z.number().int().positive(),
@@ -43,8 +42,7 @@ export type StitchUiConstraints = z.infer<typeof stitchUiConstraintsSchema>;
 let cachedConstraints: StitchUiConstraints | null = null;
 
 function constraintsFilePath(): string {
-  const moduleDir = dirname(fileURLToPath(import.meta.url));
-  return resolve(moduleDir, "stitch-ui-constraints.yaml");
+  return resolveStitchProjectFile(import.meta.url, "src/stitch/constraints/stitch-ui-constraints.yaml");
 }
 
 export function loadStitchUiConstraints(): StitchUiConstraints {

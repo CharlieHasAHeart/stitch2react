@@ -1,8 +1,7 @@
 import { readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import { parse } from "yaml";
 import { z } from "zod";
+import { resolveStitchProjectFile } from "../shared/resolve-stitch-project-file.js";
 
 const issueMetadataSchema = z.object({
   suggestedFix: z.string()
@@ -56,8 +55,7 @@ export type RuntimeValidationConstraints = z.infer<typeof runtimeValidationConst
 let cachedConstraints: RuntimeValidationConstraints | null = null;
 
 function constraintsFilePath(): string {
-  const moduleDir = dirname(fileURLToPath(import.meta.url));
-  return resolve(moduleDir, "runtime-validation-constraints.yaml");
+  return resolveStitchProjectFile(import.meta.url, "src/stitch/constraints/runtime-validation-constraints.yaml");
 }
 
 export function loadRuntimeValidationConstraints(): RuntimeValidationConstraints {

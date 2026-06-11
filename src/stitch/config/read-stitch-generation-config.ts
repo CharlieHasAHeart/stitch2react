@@ -1,8 +1,7 @@
 import { readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import { parse } from "yaml";
 import { z } from "zod";
+import { resolveStitchProjectFile } from "../shared/resolve-stitch-project-file.js";
 
 const stitchGenerationConfigSchema = z.object({
   version: z.number().int().positive(),
@@ -21,8 +20,7 @@ export type StitchCandidateSearchConfig = StitchGenerationConfig["candidateSearc
 let cachedConfig: StitchGenerationConfig | null = null;
 
 function generationConfigFilePath(): string {
-  const moduleDir = dirname(fileURLToPath(import.meta.url));
-  return resolve(moduleDir, "stitch-generation-config.yaml");
+  return resolveStitchProjectFile(import.meta.url, "src/stitch/config/stitch-generation-config.yaml");
 }
 
 export function readStitchGenerationConfig(): StitchGenerationConfig {

@@ -1,0 +1,34 @@
+# Stitch Output Capability Probe
+
+Generated at: 2026-06-11T09:05:44.330Z
+Probe run ID: task-037-2026-06-11T08-59-03-736Z
+Artifact root: `/home/charlie/workspace/stitch2react/artifacts/task-037-probe/task-037-2026-06-11T08-59-03-736Z`
+SDK version: `0.3.5`
+
+## Capability Matrix
+
+| Probe | Prompt Used | Output Shape Observed | Files / Code Blocks Produced | JS | CSS | Runtime Validation | Cross-page Navigation | Blockers / Manual Steps |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Probe A | Generate a read-only enterprise operations summary page for a logistics team. Use a clear heading, summary KPI cards, and a recent activity section. Keep it informational with no modal or advanced interaction requirements. | `single_html_with_script_surface` | `probe-a-single-static-html/screen.html`<br>`logistics_core/DESIGN.md`<br>`image-url:https://lh3.googleusercontent.com/aida/AP1WRLsoDZ96AZAG3Bfzg_I8tx_I4KvjtARba_3F_yEFC-GZkG-roItV9KQRMOSnA-BUPDCRP_fLiejKrielFrGDWqCNyCRoIupJx1AN7yz2m4GHRa8FIrBluFg8e4Bq9flxcKs04D0cbrMbleHqAINdwnQdl7TRdkI3aW9kXP95GgtsFiE3nQO-w9vTdemOl14TifVDa9y2ZKyWwlik_LRKynnZdlaEljyv5naYatwjkj6AbPSAWsMh81sNS0M` | inline | inline | failed [missing_runtime_click_behavior, missing_runtime_click_behavior, missing_runtime_click_behavior, missing_runtime_click_behavior, missing_runtime_click_behavior, missing_runtime_click_behavior, missing_runtime_click_behavior] | absent | none |
+| Probe B | Generate an enterprise request-management page with tabs, a modal or drawer launched by a visible action, toast or inline feedback after save, and inline validation states for at least one required form field. | `single_html_with_script_surface` | `probe-b-single-html-with-inline-js-interaction/screen.html`<br>`enterprise_logic/DESIGN.md`<br>`image-url:https://lh3.googleusercontent.com/aida/AP1WRLurRkZj9nFYKJNYWBQgErArzEBsKADUBqexx_1MsxyZzRPkD4RlwetAxlx4bmKr1OImTkhwIqPuVPqV7nGDZCYvR48uMNYQKfFansZ60FUJuWrDF00YvWxV925vkY4m6k08rA6lh7KtiFngSzgeC9VtwirI431HtEV5JO9bGCvG4DvrT0kfTXULNC2GX6Z4Beg9o0iy8xbzpwrwnb2rj0XU9F_vnw1UgiFc13FM8PdvtdpwkZOJ43LQXXg` | inline | inline | failed [missing_runtime_click_behavior, missing_runtime_click_behavior, missing_runtime_click_behavior, missing_runtime_click_behavior, click_only_changes_focus_or_hover, click_only_changes_focus_or_hover, missing_runtime_click_behavior, missing_runtime_click_behavior, missing_runtime_click_behavior, missing_runtime_click_behavior, missing_runtime_click_behavior, missing_runtime_click_behavior, missing_runtime_click_behavior, missing_runtime_click_behavior, missing_runtime_click_behavior, missing_runtime_click_behavior, missing_runtime_click_behavior, missing_runtime_click_behavior] | absent | none |
+| Probe C | Generate this as an index.html, styles.css, and app.js style export for an enterprise approval dashboard with a sidebar, filters, and a detail panel. Use external CSS and external JS if supported. | `single_html_with_script_surface` | `probe-c-html-with-external-css-and-js-files/screen.html`<br>`enterprise_precision/DESIGN.md`<br>`image-url:https://lh3.googleusercontent.com/aida/AP1WRLswR7HE4f6y91ehWdV9ElTG96FsJGNqOr36LUGWaeZ1nv63cFdM65p-lXFQhDdsWMqi9j_Ank5ybylZ5vS9FKXMJ0m30Bgy6n4QCYKWriDaLSLGG9iL1rHYJUs-Wui13N_xVSOuCjv0UiqpWxLJBuBV0ITnjRCB6cvE_TvGEU7kcp5BRCA40aVVqfvJuNXU7X-jmtjYNHjIzSdabEYeYmgm7t_ucwhXzqBM-loqUB99c_fJ9EoK4rkn9sAX` | inline | inline | failed [missing_runtime_click_behavior, missing_runtime_click_behavior, missing_runtime_click_behavior, missing_runtime_click_behavior, missing_runtime_click_behavior, missing_runtime_click_behavior, missing_runtime_click_behavior, missing_runtime_click_behavior, missing_runtime_click_behavior, missing_runtime_click_behavior, missing_runtime_click_behavior, missing_runtime_click_behavior] | absent | manual: Prompt requested external CSS/JS packaging, but the observed surface did not prove a separate CSS/JS bundle contract. |
+| Probe D | Generate at least index.html and detail.html for an enterprise order review workflow, with a visible navigation link from the index page to the detail page and a back link to the index page if multi-page output is supported. | `single_html_with_script_surface` | `probe-d-multiple-linked-html-pages/screen.html`<br>`core_enterprise_logic/DESIGN.md`<br>`image-url:https://lh3.googleusercontent.com/aida/AP1WRLt4BlT4aLpGH1z3rS-DSjohdm5cAROBSNMBlF2Uv2mJ-PFqzwrAPEqyE1r-MvrhB35NCHdl8bmpZ7Nnm4tFgowTNy3r02NshzmMIqZHONX9WsU8yKxBj28AXvGzCvILKuD1UtTwDy0gCweXmATig-08nC00fNZ_WiilAODsDqju_sItojbz3JG1lH67ny__goz_s5C_ce78X0jBLCSKub0kOWD4QJITRGVTC0IJaccp6RxnDpYo8FPtx6I` | inline | inline | failed [missing_runtime_click_behavior, missing_runtime_click_behavior, missing_runtime_click_behavior, click_only_changes_focus_or_hover, missing_runtime_click_behavior, missing_runtime_click_behavior, missing_runtime_click_behavior, click_only_changes_focus_or_hover, missing_runtime_click_behavior, missing_runtime_click_behavior] | real_file_navigation | none |
+| Probe E | Observe the current SDK/API export surface exposed by the installed Stitch SDK and current authenticated tool catalog. | `sdk_api_surface_observed` | none | inaccessible | inaccessible | not attempted | undetermined | manual: Copy-code and Figma export affordances are UI-surface concerns and remain unobserved in this script-only workflow. |
+
+## Export Surface
+
+Available SDK methods: `Stitch.createProject`, `Project.generate`, `Screen.getHtml`, `Screen.getImage`, `Project.downloadAssets`
+
+Advertised tool names: `apply_design_system`, `create_design_system`, `create_project`, `edit_screens`, `generate_screen_from_text`, `generate_variants`, `get_project`, `get_screen`, `list_design_systems`, `list_projects`, `list_screens`, `update_design_system`
+
+- Current repository integration uses `Screen.getHtml()` only; `Project.downloadAssets()` is present in the installed SDK but is not yet consumed by the pipeline.
+- The SDK surface exposes screenshot retrieval through `Screen.getImage()`.
+- No explicit Figma export method is exposed through the installed SDK entry points inspected by this probe script.
+- The script workflow cannot observe copy-code UI affordances; this probe reports only SDK/API-observable export surfaces.
+
+## Findings
+
+- Did not observe a reliable downloadable multi-file bundle contract beyond the current single-screen HTML workflow.
+- Observed real .html navigation targets in probe output; treat them as bundle evidence only after runtime serving and cross-page validation are upgraded for multi-file navigation.
+- Observed inline script surface in generated HTML; interaction behavior still needs runtime evidence before the pipeline can treat inline JS as supported interaction output.
+- The installed SDK surface exposes `Project.downloadAssets()`, so bundle export probing is possible from scripts even though the current repository integration only consumes `Screen.getHtml()`.

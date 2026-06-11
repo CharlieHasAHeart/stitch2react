@@ -100,3 +100,30 @@ Validation result:
 - passed (`npm test`, 84/84 tests)
 Blockers or follow-up notes:
 - Page-id navigation targets are only promoted to allowed when explicit marker evidence exists in generated HTML; unresolved targets remain unresolved until later tasks add broader resolver infrastructure.
+
+Task ID: TASK-037
+Status: completed
+Summary of implementation: Added an environment-driven Stitch capability probe CLI that executes the TASK-037 A-E probes against the live Stitch SDK surface, persists probe artifacts and a markdown capability matrix, and reuses the existing Chrome headless runtime validator to record interaction evidence for generated HTML. Also fixed Stitch YAML config-path resolution so built CLIs can load source-owned YAML constraints/config from both `src/` and `dist/` execution paths.
+Files changed:
+- src/stitch/probe/stitch-output-capability-probe.ts
+- src/cli/probe-stitch-capabilities.ts
+- src/stitch/shared/resolve-stitch-project-file.ts
+- src/stitch/constraints/load-runtime-validation-constraints.ts
+- src/stitch/constraints/load-stitch-ui-constraints.ts
+- src/stitch/config/read-stitch-generation-config.ts
+- tests/stitch-capability-probe.test.ts
+- tests/stitch-config-paths.test.ts
+- package.json
+- docs/execution/stitch-capability-probe-report.md
+Validation commands run:
+- npm run build
+- npm test
+- npm run stitch:probe
+Validation result:
+- passed (`npm run build`)
+- passed (`npm test`, 90/90 tests)
+- passed with recorded live probe evidence (`npm run stitch:probe`)
+Blockers or follow-up notes:
+- The live probe observed inline script/style HTML surfaces for Probes A-D, not a reliable downloadable multi-file HTML/CSS/JS bundle contract; `Project.downloadAssets()` existed in SDK v0.3.5 but returned no downloaded screen files for these runs.
+- Probe D observed real `.html` navigation targets in generated HTML, but runtime validation still failed multiple clickable elements with `missing_runtime_click_behavior` / `click_only_changes_focus_or_hover`, so multi-page support is not proven as a deliverable bundle contract yet.
+- Generated probe evidence is persisted in `artifacts/task-037-probe/task-037-2026-06-11T08-59-03-736Z`, and the capability matrix is written to `docs/execution/stitch-capability-probe-report.md`.
