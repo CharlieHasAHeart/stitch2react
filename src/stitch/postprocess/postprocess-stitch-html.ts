@@ -72,14 +72,6 @@ function mergeConstraints(base: StitchUiConstraints, override?: DeepPartial<Stit
     postprocess: {
       ...base.postprocess,
       ...override.postprocess
-    },
-    stitchGeneration: {
-      ...base.stitchGeneration,
-      ...override.stitchGeneration,
-      experimentalCandidateSearch: {
-        ...base.stitchGeneration.experimentalCandidateSearch,
-        ...override.stitchGeneration?.experimentalCandidateSearch
-      }
     }
   };
 }
@@ -438,7 +430,7 @@ export function postprocessStitchHtml(input: {
   report: StitchHtmlPostprocessReport;
 } {
   const constraints = mergeConstraints(loadStitchUiConstraints(), input.constraintsOverride ?? input.constraints);
-  const allowedFixes = new Set(constraints.postprocess.codexAllowedFixes);
+  const allowedFixes = new Set(constraints.postprocess.allowedFixes);
   const issueCodes = [...new Set(input.issues.map((issue) => issue.code))];
   const routedFixes = [...new Set(issueCodes.flatMap((code) => issueToFixes[code] ?? []))];
   let html = input.html;
