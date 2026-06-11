@@ -8,7 +8,7 @@ import type {
 import { loadStitchUiConstraints, type StitchUiConstraints } from "../constraints/load-stitch-ui-constraints.js";
 import { parseStitchHtml } from "../html/parse-stitch-html.js";
 import { findActionElements, findFeedbackSurfaces, findMainRoot } from "../html/html-contract.js";
-import { visit, SKIP } from "unist-util-visit";
+import { visit } from "unist-util-visit";
 import rehypeStringify from "rehype-stringify";
 import { unified } from "unified";
 import type { Element, Root, Text, Properties } from "hast";
@@ -72,6 +72,14 @@ function mergeConstraints(base: StitchUiConstraints, override?: DeepPartial<Stit
     postprocess: {
       ...base.postprocess,
       ...override.postprocess
+    },
+    stitchGeneration: {
+      ...base.stitchGeneration,
+      ...override.stitchGeneration,
+      experimentalCandidateSearch: {
+        ...base.stitchGeneration.experimentalCandidateSearch,
+        ...override.stitchGeneration?.experimentalCandidateSearch
+      }
     }
   };
 }
@@ -81,69 +89,11 @@ function stringify(tree: Root): string {
 }
 
 function ensureMain(tree: Root): Element | undefined {
-  const main = findMainRoot(tree);
-  return main?.node;
+  return findMainRoot(tree)?.node;
 }
 
 function pushChild(parent: Element, child: Element): void {
   parent.children.push(child as never);
-}
-
-function ensurePageId(main: Element, page: PageContract): void {
-  main.properties = { ...(main.properties ?? {}), "data-page-id": page.id };
-}
-
-function ensureRuntimeScript(tree: Root): void {
-  const existing = findElement(tree, (node) => node.tagName === "script" && node.properties?.["data-postprocess-runtime"] !== undefined);
-  if (existing) {
-    return;
-  }
-  const script: Element = {
-    type: "element",
-    tagName: "script",
-    properties: { "data-postprocess-runtime": "true" },
-    children: [{
-      type: "text",
-      value: `(() => {
-  const root = document;
-  root.addEventListener('click', (event) => {
-    const target = event.target instanceof Element ? event.target.closest('[data-action]') : null;
-    if (!target) return;
-    const action = target.getAttribute('data-action');
-    if (action === 'show_inline_feedback') {
-      const surface = root.querySelector('[data-feedback-surface]');
-      if (surface instanceof HTMLElement) surface.hidden = false;
-    }
-    if (action === 'toggle_panel') {
-      const panel = root.querySelector('[data-toggle-panel]');
-      if (panel instanceof HTMLElement) panel.hidden = !panel.hidden;
-    }
-    if (action === 'open_modal') {
-      const modal = root.querySelector('[data-modal]');
-      if (modal instanceof HTMLElement) modal.hidden = false;
-    }
-    if (action === 'submit_form') {
-      event.preventDefault();
-      const form = target.closest('form');
-      const surface = root.querySelector('[data-feedback-surface]');
-      if (form instanceof HTMLFormElement) form.setAttribute('data-submitted', 'true');
-      if (surface instanceof HTMLElement) surface.hidden = false;
-    }
-    if (action === 'reset_form') {
-      const form = target.closest('form');
-      if (form instanceof HTMLFormElement) {
-        form.reset();
-        form.setAttribute('data-reset', 'true');
-      }
-    }
-  });
-})();`
-    } as Text]
-  };
-  const htmlNode = findElement(tree, (node) => node.tagName === "body") ?? ensureMain(tree);
-  if (htmlNode) {
-    pushChild(htmlNode, script);
-  }
 }
 
 function findElement(tree: Root | Element, predicate: (node: Element) => boolean): Element | undefined {
@@ -178,7 +128,82 @@ function setProps(node: Element, props: Properties): void {
   node.properties = { ...(node.properties ?? {}), ...props } as Properties;
 }
 
-function ensureInlineFeedback(tree: Root): boolean {
+function makeDiv(text: string, props: Properties = {}): Element {
+  return {
+    type: "element",
+    tagName: "div",
+    properties: props,
+    children: [{ type: "text", value: text } as Text]
+  };
+}
+
+function ensureRuntimeScript(tree: Root): void {
+  const existing = findElement(tree, (node) => node.tagName === "script" && node.properties?.["data-postprocess-runtime"] !== undefined);
+  if (existing) {
+    return;
+  }
+  const script: Element = {
+    type: "element",
+    tagName: "script",
+    properties: { "data-postprocess-runtime": "true" },
+    children: [{
+      type: "text",
+      value: `(() => {
+  const root = document;
+  root.addEventListener('click', (event) => {
+    const target = event.target instanceof Element ? event.target.closest('[data-action]') : null;
+    if (!target) return;
+    const action = target.getAttribute('data-action');
+    if (action === 'show_inline_feedback') {
+      const surface = root.querySelector('[data-feedback-surface]');
+      if (surface instanceof HTMLElement) {
+        surface.hidden = false;
+        surface.textContent = 'Action completed.';
+      }
+    }
+    if (action === 'submit_form') {
+      event.preventDefault();
+      const form = target.closest('form');
+      if (form instanceof HTMLFormElement) {
+        form.setAttribute('data-submitted', 'true');
+      }
+      const surface = root.querySelector('[data-feedback-surface]');
+      if (surface instanceof HTMLElement) {
+        surface.hidden = false;
+        surface.textContent = 'Submitted successfully.';
+      }
+    }
+    if (action === 'reset_form') {
+      const form = target.closest('form');
+      if (form instanceof HTMLFormElement) {
+        form.reset();
+        form.setAttribute('data-reset', 'true');
+      }
+      const surface = root.querySelector('[data-feedback-surface]');
+      if (surface instanceof HTMLElement) {
+        surface.hidden = false;
+        surface.textContent = 'Form reset.';
+      }
+    }
+    if (action === 'toggle_panel') {
+      const panel = root.querySelector('[data-toggle-panel]');
+      if (panel instanceof HTMLElement) panel.hidden = !panel.hidden;
+    }
+    if (action === 'open_modal') {
+      const modal = root.querySelector('[data-modal]');
+      if (modal instanceof HTMLElement) modal.hidden = false;
+    }
+  });
+})();`
+    } as Text]
+  };
+  const body = findElement(tree, (node) => node.tagName === "body") ?? ensureMain(tree);
+  if (body) {
+    pushChild(body, script);
+  }
+}
+
+function ensureInlineFeedbackSurface(tree: Root): boolean {
   if (findFeedbackSurfaces(tree).length > 0) {
     return false;
   }
@@ -186,293 +211,274 @@ function ensureInlineFeedback(tree: Root): boolean {
   if (!main) {
     return false;
   }
-  const surface: Element = {
-    type: "element",
-    tagName: "div",
-    properties: {
-      "data-feedback-surface": "inline",
-      role: "status",
-      "aria-live": "polite",
-      hidden: true
-    },
-    children: []
-  };
-  pushChild(main, surface);
+  pushChild(main, makeDiv("Action completed.", {
+    "data-feedback-surface": "inline",
+    role: "status",
+    "aria-live": "polite",
+    hidden: true
+  }));
   return true;
 }
 
-function ensureRecoverySurface(tree: Root): boolean {
-  if (findElement(tree, (node) => node.properties?.["data-recovery-surface"] !== undefined)) {
-    return false;
+function applyInlineFeedbackFix(html: string): PostprocessFixResult {
+  const tree = parseStitchHtml(html);
+  const actions = findActionElements(tree);
+  let patched = false;
+  for (const action of actions) {
+    if (!action.node.properties?.["data-action"]) {
+      setProps(action.node, { "data-action": "show_inline_feedback" });
+      patched = true;
+    }
   }
-  const main = ensureMain(tree);
-  if (!main) {
-    return false;
+  const addedSurface = ensureInlineFeedbackSurface(tree);
+  if (!patched && !addedSurface) {
+    return { html, applied: false, reason: "feedback_surface_already_present" };
   }
-  const surface: Element = {
-    type: "element",
-    tagName: "div",
-    properties: { "data-recovery-surface": "form_retry" },
-    children: []
-  };
-  pushChild(main, surface);
-  return true;
+  ensureRuntimeScript(tree);
+  return { html: stringify(tree), applied: true };
 }
 
-function routeCandidateFixes(issueCodes: Set<string>): string[] {
-  const ordered = new Set<string>();
-  if (issueCodes.has("missing_runtime_click_behavior")) {
-    ordered.add("add_form_submit_handler");
-    ordered.add("add_reset_handler");
-    ordered.add("convert_fake_link_to_button");
-    ordered.add("add_toast_for_feedback_action");
-    ordered.add("add_toggle_panel_behavior");
-    ordered.add("add_modal_for_unhandled_button");
+function applyToastFix(html: string): PostprocessFixResult {
+  const tree = parseStitchHtml(html);
+  const actions = findActionElements(tree);
+  let patched = false;
+  for (const action of actions) {
+    if (!action.node.properties?.["data-action"] && action.type !== "submit" && action.type !== "reset") {
+      setProps(action.node, { "data-action": "show_inline_feedback" });
+      patched = true;
+    }
   }
-  if (issueCodes.has("click_only_changes_focus_or_hover")) {
-    ordered.add("add_inline_error_or_success_state");
-    ordered.add("convert_fake_link_to_button");
+  const addedSurface = ensureInlineFeedbackSurface(tree);
+  if (!patched) {
+    return { html, applied: false, reason: addedSurface ? "surface_only_added" : "actions_already_have_runtime_behavior" };
   }
-  if (issueCodes.has("missing_feedback_surface")) {
-    ordered.add("add_inline_error_or_success_state");
-  }
-  if (issueCodes.has("missing_recovery_surface")) {
-    ordered.add("add_inline_error_or_success_state");
-  }
-  if (issueCodes.has("sidebar_inconsistent_across_pages")) {
-    ordered.add("normalize_sidebar_across_pages");
-  }
-  if (issueCodes.has("invented_navigation") || issueCodes.has("undeclared_navigation_destination")) {
-    ordered.add("remove_or_disable_invented_navigation");
-  }
-  return Array.from(ordered);
+  ensureRuntimeScript(tree);
+  return { html: stringify(tree), applied: true };
 }
 
-const fixImplementations: Record<string, PostprocessFix> = {
-  add_toast_for_feedback_action: {
-    id: "add_toast_for_feedback_action",
-    apply(html, context) {
-      const tree = parseStitchHtml(html);
-      const main = ensureMain(tree);
-      if (!main) return { html, applied: false, reason: "No main root found." };
-      const button = findElement(tree, (node) => node.tagName === "button" && !node.properties?.type && !node.properties?.["data-action"]);
-      if (!button) return { html, applied: false, reason: "No plain button available for toast feedback patch." };
-      ensurePageId(main, context.page);
-      setProps(button, { type: "button", "data-action": "show_inline_feedback" });
-      setProps(button, { "data-action-id": context.page.primaryAction?.id ?? "postprocess_feedback", "data-action-kind": context.page.primaryAction?.kind ?? "primary" });
-      ensureInlineFeedback(tree);
-      ensureRuntimeScript(tree);
-      return { html: stringify(tree), applied: true };
+function applySubmitHandlerFix(html: string): PostprocessFixResult {
+  const tree = parseStitchHtml(html);
+  const submitButtons = findAllElements(tree, (node) => {
+    const type = String(node.properties?.type ?? "").toLowerCase();
+    return (node.tagName === "button" || node.tagName === "input") && type === "submit";
+  });
+  if (submitButtons.length === 0) {
+    return { html, applied: false, reason: "no_submit_button_found" };
+  }
+  let patched = false;
+  for (const button of submitButtons) {
+    if (!button.properties?.["data-action"]) {
+      setProps(button, { "data-action": "submit_form" });
+      patched = true;
     }
-  },
-  add_inline_error_or_success_state: {
-    id: "add_inline_error_or_success_state",
-    apply(html, context) {
-      const tree = parseStitchHtml(html);
-      const main = ensureMain(tree);
-      if (!main) return { html, applied: false, reason: "No main root found." };
-      ensurePageId(main, context.page);
-      const changed = ensureInlineFeedback(tree) || ensureRecoverySurface(tree);
-      const button = findElement(tree, (node) => node.tagName === "button" && node.properties?.["data-action"] === undefined);
-      if (button) {
-        setProps(button, { type: "button", "data-action": "show_inline_feedback" });
-        setProps(button, { "data-action-id": context.page.primaryAction?.id ?? "postprocess_feedback", "data-action-kind": context.page.primaryAction?.kind ?? "primary" });
-      }
-      ensureRuntimeScript(tree);
-      return { html: stringify(tree), applied: changed || !!button };
+  }
+  ensureInlineFeedbackSurface(tree);
+  ensureRuntimeScript(tree);
+  return patched ? { html: stringify(tree), applied: true } : { html, applied: false, reason: "submit_button_already_patched" };
+}
+
+function applyResetHandlerFix(html: string): PostprocessFixResult {
+  const tree = parseStitchHtml(html);
+  const resetButtons = findAllElements(tree, (node) => {
+    const type = String(node.properties?.type ?? "").toLowerCase();
+    return (node.tagName === "button" || node.tagName === "input") && type === "reset";
+  });
+  if (resetButtons.length === 0) {
+    return { html, applied: false, reason: "no_reset_button_found" };
+  }
+  let patched = false;
+  for (const button of resetButtons) {
+    if (!button.properties?.["data-action"]) {
+      setProps(button, { "data-action": "reset_form" });
+      patched = true;
     }
-  },
-  add_form_submit_handler: {
-    id: "add_form_submit_handler",
-    apply(html, context) {
-      const tree = parseStitchHtml(html);
-      const main = ensureMain(tree);
-      if (!main) return { html, applied: false, reason: "No main root found." };
-      const controls = findAllElements(tree, (node) => ["button", "input"].includes(node.tagName) && node.properties?.type === "submit");
-      if (controls.length === 0) return { html, applied: false, reason: "No submit control available for deterministic submit handler patch." };
-      ensurePageId(main, context.page);
-      for (const control of controls) {
-        setProps(control, { "data-action": "submit_form", "data-action-id": context.page.primaryAction?.id ?? "submit_form", "data-action-kind": context.page.primaryAction?.kind ?? "primary" });
-      }
-      ensureInlineFeedback(tree);
-      ensureRuntimeScript(tree);
-      return { html: stringify(tree), applied: true };
-    }
-  },
-  add_reset_handler: {
-    id: "add_reset_handler",
-    apply(html, context) {
-      const tree = parseStitchHtml(html);
-      const main = ensureMain(tree);
-      if (!main) return { html, applied: false, reason: "No main root found." };
-      const controls = findAllElements(tree, (node) => ["button", "input"].includes(node.tagName) && node.properties?.type === "reset");
-      if (controls.length === 0) return { html, applied: false, reason: "No reset control available for deterministic reset handler patch." };
-      ensurePageId(main, context.page);
-      for (const control of controls) {
-        setProps(control, { "data-action": "reset_form", "data-action-id": "reset_form", "data-action-kind": "recovery" });
-      }
-      ensureRuntimeScript(tree);
-      return { html: stringify(tree), applied: true };
-    }
-  },
-  add_toggle_panel_behavior: {
-    id: "add_toggle_panel_behavior",
-    apply(html, context) {
-      const tree = parseStitchHtml(html);
-      const main = ensureMain(tree);
-      if (!main) return { html, applied: false, reason: "No main root found." };
-      const button = findElement(tree, (node) => node.tagName === "button" && !node.properties?.type && !node.properties?.["data-action"]);
-      if (!button) return { html, applied: false, reason: "No plain button available for toggle patch." };
-      ensurePageId(main, context.page);
-      setProps(button, { type: "button", "data-action": "toggle_panel", "data-action-id": context.page.primaryAction?.id ?? "toggle_panel", "data-action-kind": context.page.primaryAction?.kind ?? "primary" });
-      if (!findElement(tree, (node) => node.properties?.["data-toggle-panel"] !== undefined)) {
-        const panel: Element = { type: "element", tagName: "section", properties: { "data-toggle-panel": "details", hidden: true }, children: [] };
-        pushChild(main, panel);
-      }
-      ensureRuntimeScript(tree);
-      return { html: stringify(tree), applied: true };
-    }
-  },
-  add_modal_for_unhandled_button: {
-    id: "add_modal_for_unhandled_button",
-    apply(html, context) {
-      const tree = parseStitchHtml(html);
-      const main = ensureMain(tree);
-      if (!main) return { html, applied: false, reason: "No main root found." };
-      const button = findElement(tree, (node) => node.tagName === "button" && !node.properties?.type && !node.properties?.["data-action"]);
-      if (!button) return { html, applied: false, reason: "No plain button available for modal patch." };
-      ensurePageId(main, context.page);
-      setProps(button, { type: "button", "data-action": "open_modal", "data-action-id": context.page.primaryAction?.id ?? "open_modal", "data-action-kind": context.page.primaryAction?.kind ?? "primary" });
-      if (!findElement(tree, (node) => node.properties?.["data-modal"] !== undefined)) {
-        const modal: Element = { type: "element", tagName: "div", properties: { "data-modal": "details", hidden: true, role: "dialog", "aria-modal": "true" }, children: [] };
-        pushChild(main, modal);
-      }
-      ensureRuntimeScript(tree);
-      return { html: stringify(tree), applied: true };
-    }
-  },
-  normalize_sidebar_across_pages: {
-    id: "normalize_sidebar_across_pages",
-    apply(html, context) {
-      const tree = parseStitchHtml(html);
-      const body = findElement(tree, (node) => node.tagName === "body");
-      const main = ensureMain(tree);
-      if (!body || !main) return { html, applied: false, reason: "No body/main found for sidebar normalization." };
-      const routeByLabel = new Map(context.blueprint.ui.pages.map((item) => [item.name, item.route]));
-      const sidebar: Element = {
-        type: "element",
-        tagName: "aside",
-        properties: { "data-sidebar": "global" },
-        children: [{
-          type: "element",
-          tagName: "nav",
-          properties: {},
-          children: [{
-            type: "element",
-            tagName: "ul",
-            properties: {},
-            children: context.blueprint.ui.navigation.globalNavItems.map((label) => ({
-              type: "element",
-              tagName: "li",
-              properties: {},
-              children: [{
-                type: "element",
-                tagName: "a",
-                properties: { href: routeByLabel.get(label) ?? context.page.route, ...(routeByLabel.get(label) === context.page.route ? { "aria-current": "page" } : {}) },
-                children: [{ type: "text", value: label } as Text]
-              } as Element]
-            } as Element))
-          } as Element]
-        } as Element]
+  }
+  ensureInlineFeedbackSurface(tree);
+  ensureRuntimeScript(tree);
+  return patched ? { html: stringify(tree), applied: true } : { html, applied: false, reason: "reset_button_already_patched" };
+}
+
+function applyConvertFakeLinkFix(html: string): PostprocessFixResult {
+  const tree = parseStitchHtml(html);
+  const links = findAllElements(tree, (node) => node.tagName === "a");
+  let converted = false;
+  for (const link of links) {
+    const href = String(link.properties?.href ?? "").trim().toLowerCase();
+    if (href === "#" || href === "javascript:void(0)") {
+      link.tagName = "button";
+      const props = { ...(link.properties ?? {}) } as Record<string, unknown>;
+      delete props.href;
+      link.properties = {
+        ...props,
+        type: "button",
+        "data-action": typeof props["data-action"] === "string" ? props["data-action"] : "show_inline_feedback"
       };
-      body.children = body.children.filter((child: any) => !(child.type === "element" && ["aside", "nav"].includes(child.tagName)));
-      body.children.unshift(sidebar as never);
-      return { html: stringify(tree), applied: true };
-    }
-  },
-  remove_or_disable_invented_navigation: {
-    id: "remove_or_disable_invented_navigation",
-    apply(html) {
-      const tree = parseStitchHtml(html);
-      let removed = false;
-      visit(tree, "element", (node: any, index: any, parent: any) => {
-        if (parent && typeof index === "number" && ["nav", "aside"].includes(node.tagName)) {
-          parent.children.splice(index, 1);
-          removed = true;
-          return [SKIP, index];
-        }
-      });
-      return { html: stringify(tree), applied: removed, reason: removed ? undefined : "No navigation block found to remove." };
-    }
-  },
-  convert_fake_link_to_button: {
-    id: "convert_fake_link_to_button",
-    apply(html, context) {
-      const tree = parseStitchHtml(html);
-      const links = findAllElements(tree, (node) => node.tagName === "a" && ["", "#"].includes(String(node.properties?.href ?? "")));
-      if (links.length === 0) return { html, applied: false, reason: "No fake link available for button conversion." };
-      for (const link of links) {
-        link.tagName = "button";
-        link.properties = { ...(link.properties ?? {}), type: "button", "data-action": "show_inline_feedback", "data-action-id": context.page.primaryAction?.id ?? "postprocess_feedback", "data-action-kind": context.page.primaryAction?.kind ?? "primary" };
-        delete (link.properties as any).href;
-      }
-      ensureInlineFeedback(tree);
-      ensureRuntimeScript(tree);
-      return { html: stringify(tree), applied: true };
+      converted = true;
     }
   }
+  if (!converted) {
+    return { html, applied: false, reason: "no_fake_links_found" };
+  }
+  ensureInlineFeedbackSurface(tree);
+  ensureRuntimeScript(tree);
+  return { html: stringify(tree), applied: true };
+}
+
+function routeForNavLabel(blueprint: ProductBlueprintV1, label: string): string {
+  const page = blueprint.ui.pages.find((item) => item.name.toLowerCase() === label.toLowerCase() || item.id.toLowerCase() === label.toLowerCase());
+  return page?.route ?? "/";
+}
+
+function applySidebarNormalizationFix(html: string, context: PostprocessContext): PostprocessFixResult {
+  const tree = parseStitchHtml(html);
+  const body = findElement(tree, (node) => node.tagName === "body");
+  const main = ensureMain(tree);
+  if (!body && !main) {
+    return { html, applied: false, reason: "missing_main_root" };
+  }
+  const existingSidebar = findElement(tree, (node) => node.tagName === "aside" && node.properties?.["data-sidebar"] === "global");
+  if (existingSidebar) {
+    return { html, applied: false, reason: "sidebar_already_normalized" };
+  }
+  const navLinks = context.blueprint.ui.navigation.globalNavItems.map((label) => ({
+    type: "element",
+    tagName: "a",
+    properties: { href: routeForNavLabel(context.blueprint, label) },
+    children: [{ type: "text", value: label } as Text]
+  })) as Element[];
+  const aside: Element = {
+    type: "element",
+    tagName: "aside",
+    properties: { "data-sidebar": "global" },
+    children: navLinks
+  };
+  const existingAside = findElement(tree, (node) => node.tagName === "aside");
+  if (existingAside) {
+    existingAside.properties = aside.properties;
+    existingAside.children = aside.children;
+  } else if (body) {
+    body.children.unshift(aside as never);
+  } else if (main) {
+    main.children.unshift(aside as never);
+  }
+  return { html: stringify(tree), applied: true };
+}
+
+function applyTogglePanelFix(html: string): PostprocessFixResult {
+  return { html, applied: false, reason: "no_safe_toggle_target_found" };
+}
+
+function applyModalFix(html: string): PostprocessFixResult {
+  return { html, applied: false, reason: "no_safe_modal_target_found" };
+}
+
+function applyRemoveInventedNavigationFix(html: string, context: PostprocessContext): PostprocessFixResult {
+  const tree = parseStitchHtml(html);
+  const allowedLabels = new Set(context.blueprint.ui.navigation.globalNavItems.map((item) => item.toLowerCase()));
+  const links = findAllElements(tree, (node) => node.tagName === "a");
+  let mutated = false;
+  for (const link of links) {
+    const label = textOf(link).toLowerCase();
+    if (label && !allowedLabels.has(label)) {
+      link.tagName = "button";
+      const props = { ...(link.properties ?? {}) } as Record<string, unknown>;
+      delete props.href;
+      link.properties = {
+        ...props,
+        type: "button",
+        disabled: true,
+        "aria-disabled": "true"
+      };
+      mutated = true;
+    }
+  }
+  return mutated ? { html: stringify(tree), applied: true } : { html, applied: false, reason: "no_invented_navigation_found" };
+}
+
+const fixRegistry: PostprocessFix[] = [
+  { id: "add_inline_error_or_success_state", apply: (html) => applyInlineFeedbackFix(html) },
+  { id: "add_toast_for_feedback_action", apply: (html) => applyToastFix(html) },
+  { id: "add_form_submit_handler", apply: (html) => applySubmitHandlerFix(html) },
+  { id: "add_reset_handler", apply: (html) => applyResetHandlerFix(html) },
+  { id: "add_toggle_panel_behavior", apply: (html) => applyTogglePanelFix(html) },
+  { id: "add_modal_for_unhandled_button", apply: (html) => applyModalFix(html) },
+  { id: "normalize_sidebar_across_pages", apply: (html, context) => applySidebarNormalizationFix(html, context) },
+  { id: "remove_or_disable_invented_navigation", apply: (html, context) => applyRemoveInventedNavigationFix(html, context) },
+  { id: "convert_fake_link_to_button", apply: (html) => applyConvertFakeLinkFix(html) }
+];
+
+const issueToFixes: Record<string, string[]> = {
+  missing_feedback_surface: ["add_inline_error_or_success_state"],
+  missing_runtime_click_behavior: [
+    "add_form_submit_handler",
+    "add_reset_handler",
+    "add_toast_for_feedback_action",
+    "add_toggle_panel_behavior",
+    "add_modal_for_unhandled_button",
+    "convert_fake_link_to_button"
+  ],
+  click_only_changes_focus_or_hover: ["add_inline_error_or_success_state", "convert_fake_link_to_button"],
+  sidebar_inconsistent_across_pages: ["normalize_sidebar_across_pages"],
+  invented_navigation: ["remove_or_disable_invented_navigation"],
+  undeclared_navigation_destination: ["remove_or_disable_invented_navigation"]
 };
 
 export function postprocessStitchHtml(input: {
   sessionId: string;
   blueprintId: string;
-  blueprint: ProductBlueprintV1;
   page: PageContract;
-  htmlArtifactId: string;
+  blueprint: ProductBlueprintV1;
+  htmlArtifactId?: string;
   html: string;
   issues: StitchHtmlValidationIssue[];
   constraints?: DeepPartial<StitchUiConstraints>;
-}): { html: string; report: StitchHtmlPostprocessReport } {
-  const { sessionId, blueprintId, blueprint, page, htmlArtifactId, html, issues } = input;
-  const constraints = mergeConstraints(loadStitchUiConstraints(), input.constraints);
-  let updatedHtml = html;
-  const appliedFixes: string[] = [];
-  const rejectedFixes: { fix: string; reason: string }[] = [];
-  const issueCodes = new Set(issues.map((item) => item.code));
+  constraintsOverride?: DeepPartial<StitchUiConstraints>;
+}): {
+  html: string;
+  report: StitchHtmlPostprocessReport;
+} {
+  const constraints = mergeConstraints(loadStitchUiConstraints(), input.constraintsOverride ?? input.constraints);
   const allowedFixes = new Set(constraints.postprocess.codexAllowedFixes);
-  const context: PostprocessContext = { blueprint, page, issueCodes };
+  const issueCodes = [...new Set(input.issues.map((issue) => issue.code))];
+  const routedFixes = [...new Set(issueCodes.flatMap((code) => issueToFixes[code] ?? []))];
+  let html = input.html;
+  const appliedFixes: string[] = [];
+  const rejectedFixes: Array<{ fix: string; reason: string }> = [];
 
-  for (const fixId of routeCandidateFixes(issueCodes)) {
+  for (const fixId of routedFixes) {
     if (!allowedFixes.has(fixId)) {
-      rejectedFixes.push({ fix: fixId, reason: "Disabled by YAML postprocess allowlist." });
+      rejectedFixes.push({ fix: fixId, reason: "disabled_in_constraints_allowlist" });
       continue;
     }
-    const fix = fixImplementations[fixId];
+    const fix = fixRegistry.find((entry) => entry.id === fixId);
     if (!fix) {
-      rejectedFixes.push({ fix: fixId, reason: "No deterministic implementation exists for this fix." });
+      rejectedFixes.push({ fix: fixId, reason: "fix_not_implemented" });
       continue;
     }
-    const result = fix.apply(updatedHtml, context);
-    if (result.applied) {
-      updatedHtml = result.html;
-      appliedFixes.push(fixId);
-    } else {
-      rejectedFixes.push({ fix: fixId, reason: result.reason ?? "Safety/applicability check rejected this fix." });
+    const result = fix.apply(html, {
+      blueprint: input.blueprint,
+      page: input.page,
+      issueCodes: new Set(issueCodes)
+    });
+    if (!result.applied) {
+      rejectedFixes.push({ fix: fixId, reason: result.reason ?? "not_applicable" });
+      continue;
     }
+    html = result.html;
+    appliedFixes.push(fixId);
   }
 
-  return {
-    html: updatedHtml,
-    report: {
-      id: createId("stitch_post"),
-      sessionId,
-      blueprintId,
-      pageIds: [page.id],
-      sourceIssueCodes: Array.from(issueCodes),
-      appliedFixes,
-      changedArtifacts: [htmlArtifactId],
-      rejectedFixes,
-      createdAt: nowIso()
-    }
+  const report: StitchHtmlPostprocessReport = {
+    id: createId("stitch_html_postprocess_report"),
+    sessionId: input.sessionId,
+    blueprintId: input.blueprintId,
+    pageIds: [input.page.id],
+    sourceIssueCodes: issueCodes,
+    appliedFixes,
+    changedArtifacts: input.htmlArtifactId ? [input.htmlArtifactId] : [],
+    rejectedFixes,
+    createdAt: nowIso()
   };
+
+  return { html, report };
 }

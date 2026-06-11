@@ -78,3 +78,11 @@ postprocess:
     - "normalize_sidebar_across_pages"
     - "remove_or_disable_invented_navigation"
     - "convert_fake_link_to_button"
+
+stitchGeneration:
+  mode: "single"
+  experimentalCandidateSearch:
+    enabled: false
+    candidatesPerPage: 3
+    maxRepromptAttempts: 1
+    maxCandidatesPerReprompt: 2

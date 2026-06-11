@@ -35,6 +35,15 @@ const stitchUiConstraintsSchema = z.object({
   }),
   postprocess: z.object({
     codexAllowedFixes: z.array(z.string())
+  }),
+  stitchGeneration: z.object({
+    mode: z.enum(["single", "candidate-search"]).default("single"),
+    experimentalCandidateSearch: z.object({
+      enabled: z.boolean().default(false),
+      candidatesPerPage: z.number().int().positive(),
+      maxRepromptAttempts: z.number().int().nonnegative(),
+      maxCandidatesPerReprompt: z.number().int().positive()
+    })
   })
 });
 
