@@ -118,7 +118,7 @@ Required validation: VAL-005, VAL-006, VAL-007, VAL-008, VAL-019.
 
 Goal: generate multiple bounded candidate attempts only when `mode: "candidate"` is selected.
 
-Required validation: VAL-009, VAL-010, VAL-011, VAL-025.
+Required validation: VAL-009, VAL-010, VAL-011, VAL-025, VAL-026.
 
 ### FLOW-004: Candidate Selection Gate
 
@@ -136,7 +136,7 @@ Required validation: VAL-015, VAL-016.
 
 Goal: persist candidate attempts, rejected reasons, selected candidate, validation reports, postprocess decisions, and compatibility with the normal validated Stitch artifact path.
 
-Required validation: VAL-017, VAL-018, VAL-019, VAL-025.
+Required validation: VAL-017, VAL-018, VAL-019, VAL-025, VAL-026.
 
 ## Foundation Tasks
 
@@ -507,6 +507,82 @@ Out of scope:
 
 Required validation: VAL-025.
 
+### TASK-038: Probe single-HTML multi-screen state simulation
+
+Goal: determine whether Stitch can reliably generate one self-contained HTML artifact that simulates multiple product pages or screens through inline JavaScript state changes, without requiring external JS files or multiple HTML files.
+
+Background:
+
+```text
+Recent Stitch outputs show that single HTML artifacts can include inline JavaScript for drawers, toasts, selected-row states, and simple animations. This suggests a possible middle path between static single-page mocks and true multi-file page bundles:
+- one HTML artifact
+- multiple screen or panel regions inside the same DOM
+- inline JS that switches visible screen state
+- optional hash updates or data-screen markers for validation
+```
+
+Capability probes:
+
+```text
+Probe F: single HTML multi-screen workflow
+- Prompt Stitch to generate one self-contained HTML file for a three-screen enterprise workflow: list, detail, and edit/review.
+- Require visible controls that switch between screens without loading another HTML file.
+- Require each screen region to have a stable marker such as data-screen-id.
+- Require active navigation state, breadcrumb/state label, and back/forward controls inside the single HTML artifact.
+
+Probe G: hash-based single HTML screen switching
+- Prompt Stitch to generate one self-contained HTML file that uses hash routes such as #list, #detail, and #review.
+- Require inline JS to update visible screen state when the hash changes.
+- Validate whether runtime evidence can observe URL hash changes and DOM changes together.
+
+Probe H: data-state single HTML wizard
+- Prompt Stitch to generate one self-contained HTML file for a step-based approval wizard.
+- Require inline JS to move between steps, validate at least one required field, and show a completion state.
+- Validate whether runtime evidence can distinguish meaningful stateful UI interaction from visual micro-interactions.
+```
+
+Required output:
+
+```text
+Extend the Stitch capability probe report with a single_html_multi_screen section.
+For each probe, record:
+- prompt used
+- whether output remained a single HTML artifact
+- screen/state markers observed, such as data-screen-id or aria-selected
+- inline JS functions or event listeners responsible for state switching
+- whether screen changes are DOM visibility changes, hash changes, or both
+- whether runtime validation observed a meaningful visible effect
+- whether the interaction should be classified as stateful_ui_interaction, navigation_affordance, hash_or_state_simulation, or proven_cross_page_navigation
+```
+
+Decision rules:
+
+```text
+If Stitch reliably produces single HTML multi-screen simulations:
+- add a capability flag such as single_html_multi_screen_interactions.
+- keep this distinct from multi-file navigation and multi-page bundles.
+- allow prompts to ask for inline JS state machines for declared in-page workflows.
+- runtime validation must verify screen changes through DOM/hash evidence before treating them as supported behavior.
+
+If Stitch only produces visual micro-interactions:
+- do not treat those scripts as meaningful workflow support.
+- keep inline JS interaction support limited to drawer/modal/toast/tab/detail-panel evidence.
+
+If Stitch produces href links without implementing in-page state switching:
+- classify the output as navigation_affordance or declared_file_href, not single_html_multi_screen.
+```
+
+Out of scope:
+
+```text
+- Do not treat single HTML simulated screens as true multi-file navigation.
+- Do not introduce a client-side router dependency.
+- Do not require external JS files for this probe.
+- Do not expand selected-candidate artifact persistence beyond one HTML file here.
+```
+
+Required validation: VAL-026.
+
 ### TASK-040: Validate candidate attempts
 
 Goal: attach validation report IDs and hard-gate results to candidate attempts.
@@ -517,13 +593,13 @@ Required validation: VAL-012, VAL-017.
 
 Goal: reject hard-gate failures, rank only eligible candidates, and persist selected or failed final decision.
 
-Required validation: VAL-012, VAL-013, VAL-014, VAL-022, VAL-023, VAL-024, VAL-025.
+Required validation: VAL-012, VAL-013, VAL-014, VAL-022, VAL-023, VAL-024, VAL-025, VAL-026.
 
 ### TASK-042: Adapt selected candidate
 
 Goal: expose the selected candidate as a normal validated Stitch artifact while preserving lineage.
 
-Required validation: VAL-014, VAL-018, VAL-019, VAL-025.
+Required validation: VAL-014, VAL-018, VAL-019, VAL-025, VAL-026.
 
 ### TASK-050: Implement targeted reprompt
 
@@ -541,7 +617,7 @@ Required validation: VAL-009, VAL-016.
 
 Goal: persist candidate run, attempts, prompt plans, prompts, HTML, validation reports, selection report, rejected report, and selected manifest.
 
-Required validation: VAL-017, VAL-018, VAL-025.
+Required validation: VAL-017, VAL-018, VAL-025, VAL-026.
 
 ### TASK-061: Persist selected candidate evidence
 
@@ -567,7 +643,7 @@ Required validation: VAL-003, VAL-011, VAL-015.
 
 Goal: prove candidate lineage does not break default artifact consumers.
 
-Required validation: VAL-018, VAL-019, VAL-025.
+Required validation: VAL-018, VAL-019, VAL-025, VAL-026.
 
 ## Validation Catalog
 
@@ -856,6 +932,24 @@ Multi-file or multi-page outputs, if supported, are treated as bundles and requi
 navigation_clarity remains a presentation-level soft score until runtime or cross-page validation proves real navigation behavior.
 ```
 
+### VAL-026: Single HTML multi-screen simulation probe
+
+Command:
+
+```bash
+npm test
+```
+
+Claim:
+
+```text
+Stitch single-HTML multi-screen probes record whether one HTML artifact can simulate list/detail/edit or wizard-style workflows through inline JavaScript.
+Generated simulated screens are identified by stable markers such as data-screen-id, hash state, aria-selected, or equivalent observable DOM state.
+Runtime validation distinguishes meaningful stateful screen changes from visual micro-interactions.
+Single HTML simulated screens are not treated as true multi-file navigation or cross-page behavior.
+Candidate artifact contracts remain one HTML artifact unless separate bundle evidence exists.
+```
+
 ## Release Validation
 
 Before handoff, run:
@@ -877,6 +971,7 @@ Static, runtime, and cross-page validation contracts pass.
 Default validation does not regenerate HTML.
 Candidate mode creates bounded prompt plans and attempts.
 Stitch output shape assumptions are backed by capability probe evidence before artifact contracts expand.
+Single HTML multi-screen simulation is probed separately from true multi-file navigation.
 Hard gate failures cannot be selected.
 Soft scores cannot override hard gate failures.
 Candidate ranking contracts are strict, deterministic, explicitly scored, hardened against ambiguous score inputs, and avoid unresolved-navigation false negatives.
