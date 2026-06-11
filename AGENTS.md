@@ -4,7 +4,7 @@
 
 This repository implements a one-shot product understanding and generation pipeline.
 
-The system converts one user input into a frozen `ProductBlueprintV1`, then uses that frozen blueprint as the only source of truth for downstream Stitch HTML generation, validation, deterministic postprocess, and experimental candidate-search work.
+The system converts one user input into a frozen `ProductBlueprintV1`, then uses that frozen blueprint as the only source of truth for downstream Stitch HTML generation, validation, deterministic postprocess, and experimental candidate work.
 
 React, mock data, API, and state-generation are future directions unless a task explicitly scopes them. They are not part of the current required pipeline.
 
@@ -32,12 +32,12 @@ Do not scan every document and infer new work. The execution spine is `docs/exec
 - One user input only.
 - Frozen `ProductBlueprintV1` is the downstream product source of truth.
 - Do not generate Stitch directly from raw input.
-- Do not use raw user input for Stitch repair, candidate search, candidate scoring, or targeted reprompt.
+- Do not use raw user input for Stitch repair, candidate generation, candidate scoring, or targeted reprompt.
 - Flow modeling happens before page modeling.
 - Default blueprint repair must be deterministic; do not use LLM repair in the default path.
 - Default Stitch generation must remain single-candidate.
-- Experimental candidate-search must be explicitly enabled by runtime configuration.
-- Candidate-search must not replace the default Stitch2HTML path without documentation, contract-test, and artifact-compatibility updates.
+- Experimental candidate mode must be explicitly selected by runtime configuration.
+- Candidate mode must not replace the default Stitch2HTML path without documentation, contract-test, and artifact-compatibility updates.
 - Validation and postprocess must never mutate the frozen blueprint.
 - Final validation gate remains the deliverability authority.
 
@@ -53,7 +53,7 @@ frozen ProductBlueprintV1
   -> page-level Stitch HTML
   -> static validation
   -> Chrome headless runtime validation via direct CDP client
-  -> deterministic Codex SDK postprocess when code-fixable
+  -> deterministic HTML postprocess when code-fixable
   -> re-validation
   -> cross-page validation
   -> final validation gate
@@ -62,11 +62,40 @@ frozen ProductBlueprintV1
 
 The default path is not allowed to call Stitch again after validation failure. It may only use deterministic postprocess followed by re-validation.
 
-## Experimental Candidate Search Scope
+## Configuration Ownership
 
-Candidate-search is experimental and opt-in only.
+Stitch UI and HTML behavior constraints live in:
 
-Allowed candidate-search path:
+```text
+src/stitch/constraints/stitch-ui-constraints.yaml
+```
+
+Stitch generation orchestration mode and candidate budgets live in:
+
+```text
+src/stitch/config/stitch-generation-config.yaml
+```
+
+Do not mix generation runtime configuration back into the UI constraints file.
+
+Valid generation modes are:
+
+```text
+single
+candidate
+```
+
+`single` is the default mode.
+
+`candidate` is the single opt-in switch for experimental candidate generation.
+
+Do not add a second `enabled` flag for candidate mode.
+
+## Experimental Candidate Scope
+
+Candidate mode is experimental and opt-in only.
+
+Allowed candidate path:
 
 ```text
 PageContract
@@ -82,7 +111,7 @@ PageContract
   -> selected candidate or failure diagnostics
 ```
 
-Candidate-search may consume only:
+Candidate mode may consume only:
 
 ```text
 frozen ProductBlueprintV1
@@ -92,7 +121,7 @@ validation issue codes from previous attempts when targeted reprompt is enabled
 previous candidate diagnostics when targeted reprompt is enabled
 ```
 
-Candidate-search must not consume:
+Candidate mode must not consume:
 
 ```text
 raw user input
@@ -103,7 +132,7 @@ new product requirements
 unbounded style requests
 ```
 
-Candidate-search must persist enough lineage to explain:
+Candidate mode must persist enough lineage to explain:
 
 ```text
 which candidates were generated
@@ -142,7 +171,7 @@ A soft visual score must never override a hard gate failure.
 
 ## Targeted Reprompt Rules
 
-Targeted reprompt is allowed only in experimental candidate-search mode.
+Targeted reprompt is allowed only in experimental candidate mode.
 
 Targeted reprompt may use:
 
@@ -223,9 +252,9 @@ Focus, hover, active styling, or color-only changes do not count.
 
 Runtime evidence must be structured validation evidence only. Screenshots or visual artifacts may support diagnostics, but they must not become product source of truth.
 
-## Codex SDK Postprocess
+## Deterministic HTML Postprocess
 
-Codex SDK postprocess is not LLM repair.
+Postprocess is local deterministic HTML patching. It is not Codex SDK repair, not LLM repair, and not product reinterpretation.
 
 It may fix local, code-verifiable HTML issues using validation evidence.
 
@@ -336,8 +365,8 @@ Before release or handoff, Codex must prove:
 TypeScript build passes
 unit and contract tests pass
 default Stitch generation remains single-candidate
-candidate-search is disabled by default
-candidate-search is bounded and opt-in
+candidate mode is not selected by default
+candidate mode is bounded and opt-in
 raw input does not enter Stitch prompts, candidate prompts, or targeted reprompts
 hard gate failures cannot be selected
 soft scores cannot override hard gate failures
