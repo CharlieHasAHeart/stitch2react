@@ -8,7 +8,7 @@ The output of this stage is generated HTML plus generation artifacts.
 
 Validation, deterministic repair, and final gate decisions are defined separately in the validation-and-repair stage document.
 
-Experimental candidate-search generation is defined separately in `docs/stitch-candidate-search-stage.md`.
+Experimental candidate generation is defined separately in `docs/stitch-candidate-search-stage.md`.
 
 ## Source of Truth
 
@@ -35,13 +35,13 @@ one PageContract -> one Stitch prompt -> one Stitch HTML artifact
 
 This keeps downstream validation scoped and traceable.
 
-The default path must not perform unbounded visual iteration, issue-code reprompting, or candidate ranking. Those behaviors are allowed only in the explicitly enabled experimental candidate-search mode.
+The default path must not perform unbounded visual iteration, issue-code reprompting, or candidate ranking. Those behaviors are allowed only in the explicitly enabled experimental candidate mode.
 
-## Experimental Candidate Search Mode
+## Experimental Candidate Mode
 
-An experimental candidate-search mode may be enabled by runtime flag.
+An experimental candidate mode may be enabled by runtime configuration.
 
-In candidate-search mode, a `PageContract` may produce multiple bounded Stitch candidates. A selected candidate must still pass the same downstream validation gates before persistence.
+In candidate mode, a `PageContract` may produce multiple bounded Stitch candidates. A selected candidate must still pass the same downstream validation gates before persistence.
 
 ```text
 PageContract
@@ -52,13 +52,13 @@ PageContract
   -> selected Stitch HTML artifact or failure diagnostics
 ```
 
-Candidate-search mode is documented in:
+Candidate mode is documented in:
 
 ```text
 docs/stitch-candidate-search-stage.md
 ```
 
-Candidate-search mode must not become the default path without an explicit documentation update, contract-test update, and review of artifact compatibility.
+Candidate mode must not become the default path without an explicit documentation update, contract-test update, and review of artifact compatibility.
 
 ## Stitch Prompt Contract
 
@@ -91,7 +91,7 @@ Use:
 src/stitch/constraints/stitch-ui-constraints.yaml
 ```
 
-This constraint file is not an app archetype library.
+This constraint file is not an app archetype library and is not a generation runtime configuration file.
 
 The prompt builder should not read scattered YAML fields directly.
 
@@ -107,6 +107,40 @@ consistent sidebar
 safe deterministic postprocess
 ```
 
+## Stitch Generation Configuration
+
+Use:
+
+```text
+src/stitch/config/stitch-generation-config.yaml
+```
+
+This configuration file owns generation orchestration mode and candidate budgets.
+
+Recommended top-level shape:
+
+```yaml
+version: 1
+mode: "single"
+candidateSearch:
+  candidatesPerPage: 3
+  maxRepromptAttempts: 1
+  maxCandidatesPerReprompt: 2
+```
+
+Valid modes:
+
+```text
+single
+candidate
+```
+
+`single` remains the default.
+
+`candidate` is the single opt-in switch for experimental candidate generation.
+
+Do not use a second `enabled` flag for candidate mode.
+
 ## Constraint Compilation
 
 The Stitch prompt contract should be compiled from YAML before prompt assembly.
@@ -120,7 +154,7 @@ stitch-ui-constraints.yaml
   -> buildStitchPagePrompt(...)
 ```
 
-Experimental candidate-search mode may add a `StitchPromptPlan` layer before final prompt assembly:
+Experimental candidate mode may add a `StitchPromptPlan` layer before final prompt assembly:
 
 ```text
 stitch-ui-constraints.yaml
@@ -130,7 +164,7 @@ stitch-ui-constraints.yaml
   -> render candidate prompt(s)
 ```
 
-This keeps YAML as the single source of truth while avoiding ad hoc field reads in the prompt builder.
+This keeps YAML as the single source of truth for UI/prompt constraints while keeping generation mode and budgets in the generation config file.
 
 The compiled prompt contract should contain:
 
@@ -144,9 +178,9 @@ forbidden patterns
 
 ## Constraint Responsibilities
 
-For stage ownership, the Stitch2HTML stage consumes this YAML only through prompt compilation. Validation and postprocess consume their own downstream contracts in the validation stage.
+For stage ownership, the Stitch2HTML stage consumes UI constraints only through prompt compilation. Validation and postprocess consume their own downstream contracts in the validation stage. Generation orchestration consumes `src/stitch/config/stitch-generation-config.yaml`.
 
-Recommended top-level shape:
+Recommended UI constraint top-level shape:
 
 ```yaml
 version: 1
@@ -172,11 +206,7 @@ navigation:
     canonicalSource: "blueprint.ui.navigation.globalNavItems"
     allowOnlyActiveStateDifference: true
 postprocess:
-  codexAllowedFixes: []
-experimentalCandidateSearch:
-  enabled: false
-  candidatesPerPage: 3
-  maxRepromptAttempts: 1
+  allowedFixes: []
 ```
 
 Prompt compilation should read:
@@ -191,13 +221,13 @@ navigation
 Postprocess should read:
 
 ```text
-postprocess.codexAllowedFixes
+postprocess.allowedFixes
 ```
 
-Experimental candidate-search orchestration may read:
+Experimental candidate orchestration should read:
 
 ```text
-experimentalCandidateSearch
+src/stitch/config/stitch-generation-config.yaml
 ```
 
 Do not expose internal postprocess fix ids directly in the Stitch prompt.
@@ -228,6 +258,6 @@ stitch_page_prompt
 stitch_html
 ```
 
-Experimental candidate-search mode should persist additional candidate lineage artifacts as defined in `docs/stitch-candidate-search-stage.md`.
+Experimental candidate mode should persist additional candidate lineage artifacts as defined in `docs/stitch-candidate-search-stage.md`.
 
 The frozen blueprint remains immutable.
