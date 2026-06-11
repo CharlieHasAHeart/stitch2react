@@ -124,7 +124,7 @@ Required validation: VAL-009, VAL-010, VAL-011.
 
 Goal: reject hard-gate failures before any soft-score ranking.
 
-Required validation: VAL-012, VAL-013, VAL-014, VAL-022.
+Required validation: VAL-012, VAL-013, VAL-014, VAL-022, VAL-023.
 
 ### FLOW-005: Bounded Targeted Reprompt
 
@@ -341,6 +341,46 @@ Out of scope:
 
 Required validation: VAL-012, VAL-013, VAL-022.
 
+### TASK-035: Harden soft score implementation details
+
+Goal: close the first-implementation gaps in `soft-scores.ts` and candidate soft score schemas before candidate selection orchestration relies on persisted scores.
+
+Implementation requirements:
+
+```text
+schema tightening:
+- candidateSoftScoresSchema must constrain every score value to a finite number in the inclusive range 0..1.
+- CandidateSoftScores schema and TypeScript type must remain aligned on the fixed SoftScoreKey set.
+
+soft-scores.ts cleanup:
+- remove unused locals such as declaredRoutes.
+- either remove validationIssueCodes from extractSoftScoreSignals/scoreCandidateHtml or use it for explicitly documented auxiliary signals.
+- validationIssueCodes must never override generated HTML structure evidence.
+
+navigation semantics:
+- confirm whether PageContract secondary action targets are route paths or page IDs.
+- if targets are page IDs, navigation scoring must resolve them to allowed routes before comparing with link href values.
+- disallowed navigation evidence must remain visible through disallowedNavigationTargetCount and must never be hidden by scoring.
+
+component clarity:
+- component_clarity must not receive 1.0 solely because required action, feedback, and recovery counts are all zero.
+- 1.0 requires positive required-component evidence or positive semantic component evidence matching the page role.
+
+bucket score behavior:
+- makeDeterministicSoftScores must either accept only exact bucket values 0, 0.5, and 1, or be renamed/documented as a bucketing helper.
+- callers must not assume arbitrary fractional inputs such as 0.7 are preserved.
+```
+
+Out of scope:
+
+```text
+- Do not introduce weighted soft scores.
+- Do not introduce screenshot, LLM, or visual-model scoring.
+- Do not implement final selected-candidate persistence here.
+```
+
+Required validation: VAL-022, VAL-023.
+
 ### TASK-040: Validate candidate attempts
 
 Goal: attach validation report IDs and hard-gate results to candidate attempts.
@@ -351,7 +391,7 @@ Required validation: VAL-012, VAL-017.
 
 Goal: reject hard-gate failures, rank only eligible candidates, and persist selected or failed final decision.
 
-Required validation: VAL-012, VAL-013, VAL-014, VAL-022.
+Required validation: VAL-012, VAL-013, VAL-014, VAL-022, VAL-023.
 
 ### TASK-042: Adapt selected candidate
 
@@ -635,6 +675,25 @@ totalScore is the unweighted average of all required soft score keys.
 tie-breaker order is totalScore desc, candidateIndex asc, attemptId asc.
 ```
 
+### VAL-023: Soft score implementation hardening
+
+Command:
+
+```bash
+npm test
+```
+
+Claim:
+
+```text
+candidateSoftScoresSchema rejects non-finite or out-of-range score values.
+soft-score signal extraction has no unused locals and no ignored parameters.
+validationIssueCodes, if accepted, are used only as documented auxiliary signals and never override HTML structure evidence.
+navigation clarity compares link href values against resolved allowed routes rather than unresolved page IDs.
+component_clarity cannot receive 1.0 from an absence of required component evidence alone.
+makeDeterministicSoftScores has explicit bucket-value behavior for 0, 0.5, and 1.
+```
+
 ## Release Validation
 
 Before handoff, run:
@@ -657,7 +716,7 @@ Default validation does not regenerate HTML.
 Candidate mode creates bounded prompt plans and attempts.
 Hard gate failures cannot be selected.
 Soft scores cannot override hard gate failures.
-Candidate ranking contracts are strict, deterministic, and explicitly scored.
+Candidate ranking contracts are strict, deterministic, explicitly scored, and hardened against ambiguous score inputs.
 Rejected candidate diagnostics are persisted.
 Targeted reprompt uses issue codes only and respects budgets.
 Selected candidate lineage and default artifact compatibility are preserved.
