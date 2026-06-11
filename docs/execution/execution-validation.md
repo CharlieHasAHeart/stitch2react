@@ -124,7 +124,7 @@ Required validation: VAL-009, VAL-010, VAL-011.
 
 Goal: reject hard-gate failures before any soft-score ranking.
 
-Required validation: VAL-012, VAL-013, VAL-014, VAL-022, VAL-023.
+Required validation: VAL-012, VAL-013, VAL-014, VAL-022, VAL-023, VAL-024.
 
 ### FLOW-005: Bounded Targeted Reprompt
 
@@ -381,6 +381,45 @@ Out of scope:
 
 Required validation: VAL-022, VAL-023.
 
+### TASK-036: Distinguish unresolved navigation targets from disallowed navigation
+
+Goal: prevent navigation soft scoring from treating unresolved PageContract targets as proven invalid navigation, while still preserving explicit disallowed-navigation evidence.
+
+Implementation requirements:
+
+```text
+navigation signal model:
+- Soft score signal extraction must distinguish allowed, disallowed, and unresolved navigation targets.
+- Add or expose an unresolvedNavigationTargetCount signal rather than folding unresolved targets into disallowedNavigationTargetCount.
+- disallowedNavigationTargetCount must represent only links proven to be outside the allowed route/page target set.
+- unresolvedNavigationTargetCount must represent targets that cannot be resolved with the current PageContract/route information.
+
+navigation scoring:
+- navigation_clarity = 1.0 only when allowed navigation is represented, navigation is grouped, disallowedNavigationTargetCount is 0, and unresolvedNavigationTargetCount is 0.
+- navigation_clarity = 0.5 when navigation exists and no target is proven disallowed, but one or more targets are unresolved or navigation is not clearly grouped.
+- navigation_clarity = 0.0 when any target is proven disallowed, or when there is no meaningful navigation structure.
+
+route/page target resolution:
+- If PageContract secondary action targets are route paths, compare link href values directly against those routes.
+- If PageContract secondary action targets are page IDs, compare against explicit page-id markers in generated HTML when present, such as data-page-id or data-target-page-id.
+- If no route resolver or page-id marker exists, classify the target as unresolved, not disallowed.
+
+safety boundary:
+- Unresolved navigation must never be promoted to allowed navigation.
+- Unresolved navigation must not force navigation_clarity to 0.0 by itself.
+- Explicitly invented or undeclared navigation remains a hard-gate concern when validation emits the corresponding issue code.
+```
+
+Out of scope:
+
+```text
+- Do not implement a global route registry here.
+- Do not reinterpret page IDs into routes without explicit mapping evidence.
+- Do not change hard-gate issue semantics.
+```
+
+Required validation: VAL-013, VAL-022, VAL-024.
+
 ### TASK-040: Validate candidate attempts
 
 Goal: attach validation report IDs and hard-gate results to candidate attempts.
@@ -391,7 +430,7 @@ Required validation: VAL-012, VAL-017.
 
 Goal: reject hard-gate failures, rank only eligible candidates, and persist selected or failed final decision.
 
-Required validation: VAL-012, VAL-013, VAL-014, VAL-022, VAL-023.
+Required validation: VAL-012, VAL-013, VAL-014, VAL-022, VAL-023, VAL-024.
 
 ### TASK-042: Adapt selected candidate
 
@@ -694,6 +733,24 @@ component_clarity cannot receive 1.0 from an absence of required component evide
 makeDeterministicSoftScores has explicit bucket-value behavior for 0, 0.5, and 1.
 ```
 
+### VAL-024: Navigation unresolved target scoring
+
+Command:
+
+```bash
+npm test
+```
+
+Claim:
+
+```text
+soft-score signal extraction distinguishes allowed, disallowed, and unresolved navigation targets.
+unresolved targets are represented by unresolvedNavigationTargetCount and are not added to disallowedNavigationTargetCount.
+unresolved navigation can cap navigation_clarity at 0.5 but does not force navigation_clarity to 0.0 by itself.
+only explicitly disallowed navigation forces navigation_clarity to 0.0.
+page-id targets are matched through explicit page-id markers or explicit route resolver evidence, not guessed routes.
+```
+
 ## Release Validation
 
 Before handoff, run:
@@ -716,7 +773,7 @@ Default validation does not regenerate HTML.
 Candidate mode creates bounded prompt plans and attempts.
 Hard gate failures cannot be selected.
 Soft scores cannot override hard gate failures.
-Candidate ranking contracts are strict, deterministic, explicitly scored, and hardened against ambiguous score inputs.
+Candidate ranking contracts are strict, deterministic, explicitly scored, hardened against ambiguous score inputs, and avoid unresolved-navigation false negatives.
 Rejected candidate diagnostics are persisted.
 Targeted reprompt uses issue codes only and respects budgets.
 Selected candidate lineage and default artifact compatibility are preserved.
