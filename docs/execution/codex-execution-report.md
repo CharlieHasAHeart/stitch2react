@@ -85,3 +85,18 @@ Validation result:
 - passed (`npm test`, 75/75 tests)
 Blockers or follow-up notes:
 - Navigation soft scoring now treats slash-prefixed `targetPageId` values as resolved routes and keeps non-route targets visible as unresolved/disallowed evidence until a later task introduces explicit page-id-to-route resolution.
+
+Task ID: TASK-036
+Status: completed
+Summary of implementation: Distinguished unresolved navigation targets from disallowed navigation in candidate soft-score extraction, added explicit unresolved navigation signal tracking, matched page-id navigation targets through explicit data-target-page-id markers, and updated navigation clarity scoring so unresolved targets cap clarity without being treated as proven disallowed navigation.
+Files changed:
+- src/stitch/candidate-search/soft-scores.ts
+- tests/stitch-candidate-search.test.ts
+Validation commands run:
+- npm run build
+- npm test
+Validation result:
+- passed (`npm run build`)
+- passed (`npm test`, 84/84 tests)
+Blockers or follow-up notes:
+- Page-id navigation targets are only promoted to allowed when explicit marker evidence exists in generated HTML; unresolved targets remain unresolved until later tasks add broader resolver infrastructure.

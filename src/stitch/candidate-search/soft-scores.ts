@@ -33,13 +33,16 @@ export type CandidateSoftScoreSignals = {
   representedAllowedNavigationTargetCount: number;
   declaredNavigationElementCount: number;
   disallowedNavigationTargetCount: number;
+  unresolvedNavigationTargetCount: number;
   pageRole: "dashboard" | "form" | "detail" | "workflow" | "empty-state" | "unknown";
   approximateContentBlockCount: number;
 };
 
+type ResolvedNavigationTargetKind = "allowed" | "disallowed" | "unresolved";
+
 type AllowedNavigationTargets = {
   routes: Set<string>;
-  unresolvedTargets: Set<string>;
+  pageIds: Set<string>;
 };
 
 const DENSITY_RANGES: Record<CandidateSoftScoreSignals["pageRole"], { min: number; max: number }> = {
@@ -85,7 +88,7 @@ function expectedActionTexts(pageContract: PageContract): string[] {
 
 function resolveAllowedNavigationTargets(pageContract: PageContract): AllowedNavigationTargets {
   const routes = new Set<string>();
-  const unresolvedTargets = new Set<string>();
+  const pageIds = new Set<string>();
 
   for (const action of pageContract.secondaryActions) {
     const target = action.targetPageId?.trim();
@@ -95,11 +98,33 @@ function resolveAllowedNavigationTargets(pageContract: PageContract): AllowedNav
     if (target.startsWith("/")) {
       routes.add(target);
     } else {
-      unresolvedTargets.add(target);
+      pageIds.add(target);
     }
   }
 
-  return { routes, unresolvedTargets };
+  return { routes, pageIds };
+}
+
+function resolveNavigationLinkTargetKind(input: {
+  href: string;
+  linkElement: ReturnType<typeof findNavigationLinks>[number];
+  allowedNavigationTargets: AllowedNavigationTargets;
+}): ResolvedNavigationTargetKind {
+  const { href, linkElement, allowedNavigationTargets } = input;
+  if (allowedNavigationTargets.routes.has(href)) {
+    return "allowed";
+  }
+
+  const targetPageId = getStringProp(linkElement.node, "data-target-page-id")?.trim();
+  if (targetPageId && allowedNavigationTargets.pageIds.has(targetPageId)) {
+    return "allowed";
+  }
+
+  if (allowedNavigationTargets.pageIds.size > 0) {
+    return "unresolved";
+  }
+
+  return "disallowed";
 }
 
 function countRepresentedRequiredActions(pageContract: PageContract, actionTexts: string[]): number {
@@ -166,6 +191,7 @@ export function extractSoftScoreSignals(input: {
 
   let representedAllowedNavigationTargetCount = 0;
   let disallowedNavigationTargetCount = 0;
+  let unresolvedNavigationTargetCount = 0;
   let declaredNavigationElementCount = 0;
 
   for (const link of navigationLinks) {
@@ -173,8 +199,15 @@ export function extractSoftScoreSignals(input: {
       continue;
     }
     declaredNavigationElementCount += 1;
-    if (allowedNavigationTargets.routes.has(link.href)) {
+    const resolvedTargetKind = resolveNavigationLinkTargetKind({
+      href: link.href,
+      linkElement: link,
+      allowedNavigationTargets
+    });
+    if (resolvedTargetKind === "allowed") {
       representedAllowedNavigationTargetCount += 1;
+    } else if (resolvedTargetKind === "unresolved") {
+      unresolvedNavigationTargetCount += 1;
     } else {
       disallowedNavigationTargetCount += 1;
     }
@@ -195,10 +228,11 @@ export function extractSoftScoreSignals(input: {
     representedFeedbackSurfaceCount: feedbackSurfaces.length,
     requiredRecoverySurfaceCount: input.pageContract.recoverySurfaces.length,
     representedRecoverySurfaceCount: recoverySurfaces.length,
-    allowedNavigationTargetCount: allowedNavigationTargets.routes.size + allowedNavigationTargets.unresolvedTargets.size,
+    allowedNavigationTargetCount: allowedNavigationTargets.routes.size + allowedNavigationTargets.pageIds.size,
     representedAllowedNavigationTargetCount,
     declaredNavigationElementCount,
-    disallowedNavigationTargetCount: disallowedNavigationTargetCount + allowedNavigationTargets.unresolvedTargets.size,
+    disallowedNavigationTargetCount,
+    unresolvedNavigationTargetCount,
     pageRole,
     approximateContentBlockCount: countContentBlocks(tree)
   };
@@ -271,6 +305,7 @@ export function scoreCandidateSignals(signals: CandidateSoftScoreSignals): Candi
       signals.representedAllowedNavigationTargetCount > 0 &&
       signals.declaredNavigationElementCount > 0 &&
       signals.disallowedNavigationTargetCount === 0 &&
+      signals.unresolvedNavigationTargetCount === 0 &&
       signals.groupedNavigationContainerCount > 0
         ? 1
         : signals.representedAllowedNavigationTargetCount > 0 && signals.disallowedNavigationTargetCount === 0
