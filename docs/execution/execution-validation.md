@@ -74,6 +74,8 @@ src/stitch/validation/validate-stitch-cross-page.ts
 src/stitch/postprocess/postprocess-stitch-html.ts
 src/stitch/plan/build-stitch-prompt-plan.ts
 src/stitch/prompts/build-stitch-page-prompt.ts
+src/stitch/candidate-search/hard-gates.ts
+src/stitch/candidate-search/soft-scores.ts
 src/blueprint/types/blueprint.ts
 src/blueprint/schemas/blueprint.ts
 src/blueprint/persistence/repository.ts
@@ -122,7 +124,7 @@ Required validation: VAL-009, VAL-010, VAL-011.
 
 Goal: reject hard-gate failures before any soft-score ranking.
 
-Required validation: VAL-012, VAL-013, VAL-014.
+Required validation: VAL-012, VAL-013, VAL-014, VAL-022.
 
 ### FLOW-005: Bounded Targeted Reprompt
 
@@ -250,6 +252,36 @@ Goal: run default flow for `single` and candidate flow for `candidate` without c
 
 Required validation: VAL-001, VAL-009, VAL-020.
 
+### TASK-034: Tighten candidate ranking contracts
+
+Goal: turn the first-pass hard-gate and soft-score helpers into strict selection-safe contracts before candidate selection orchestration depends on them.
+
+Implementation requirements:
+
+```text
+hard-gates.ts:
+- hard gate issue codes remain the only source for binary eligibility.
+- collectHardGateIssues must dedupe issue codes.
+- hard-gate result must be pass only when no hardGateIssues exist.
+
+soft-scores.ts:
+- CandidateSoftScores must use the fixed SoftScoreKey set, not arbitrary Record<string, number>.
+- soft score values must be deterministic and bounded.
+- rankEligibleCandidateAttempts must not silently filter hard-gate-failed attempts.
+- rankEligibleCandidateAttempts must fail fast when any input attempt is not hard-gate eligible.
+- ranking tie-breaker must be stable: totalScore descending, candidateIndex ascending, attemptId ascending.
+```
+
+Out of scope:
+
+```text
+- Do not implement final candidate selection here.
+- Do not persist selected manifests here.
+- Do not introduce screenshot, LLM, or visual-model scoring.
+```
+
+Required validation: VAL-012, VAL-013, VAL-022.
+
 ### TASK-040: Validate candidate attempts
 
 Goal: attach validation report IDs and hard-gate results to candidate attempts.
@@ -260,7 +292,7 @@ Required validation: VAL-012, VAL-017.
 
 Goal: reject hard-gate failures, rank only eligible candidates, and persist selected or failed final decision.
 
-Required validation: VAL-012, VAL-013, VAL-014.
+Required validation: VAL-012, VAL-013, VAL-014, VAL-022.
 
 ### TASK-042: Adapt selected candidate
 
@@ -525,6 +557,23 @@ npm test
 
 Claim: matrix claims have focused test coverage.
 
+### VAL-022: Candidate ranking contract tightened
+
+Command:
+
+```bash
+npm test
+```
+
+Claim:
+
+```text
+soft score ranking rejects hard-gate-failed input instead of silently filtering it.
+CandidateSoftScores uses fixed SoftScoreKey keys.
+soft score values are deterministic and bounded.
+tie-breaker order is totalScore desc, candidateIndex asc, attemptId asc.
+```
+
 ## Release Validation
 
 Before handoff, run:
@@ -547,6 +596,7 @@ Default validation does not regenerate HTML.
 Candidate mode creates bounded prompt plans and attempts.
 Hard gate failures cannot be selected.
 Soft scores cannot override hard gate failures.
+Candidate ranking contracts are strict and deterministic.
 Rejected candidate diagnostics are persisted.
 Targeted reprompt uses issue codes only and respects budgets.
 Selected candidate lineage and default artifact compatibility are preserved.
